@@ -1,6 +1,6 @@
-"""Gradient boosting model using XGBoost."""
+"""LightGBM model for betting predictions."""
 
-import xgboost as xgb
+import lightgbm as lgb
 import numpy as np
 from typing import Dict, Any, Optional
 
@@ -12,42 +12,50 @@ from src.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-class GradientBoostModel(BaseModel):
-    """Gradient boosting predictor using XGBoost."""
+class LightGBMModel(BaseModel):
+    """LightGBM gradient boosting predictor."""
     
     def __init__(
         self,
-        name: str = "Gradient Strategist",
+        name: str = "LightGBM Optimizer",
         n_estimators: int = 200,
-        max_depth: int = 6,
+        max_depth: int = 7,
         learning_rate: float = 0.05,
+        num_leaves: int = 31,
         **kwargs
     ):
-        """Initialize the gradient boosting model.
+        """Initialize the LightGBM model.
         
         Args:
             name: Model name
             n_estimators: Number of boosting rounds
             max_depth: Maximum tree depth
             learning_rate: Learning rate
-            **kwargs: Additional XGBoost parameters
+            num_leaves: Number of leaves in one tree
+            **kwargs: Additional LightGBM parameters
         """
-        super().__init__(name, "gradient_boosting")
+        super().__init__(name, "lightgbm")
         
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
+        self.num_leaves = num_leaves
+        
         self.params = {
-            'objective': 'binary:logistic',
-            'max_depth': max_depth,
+            'objective': 'binary',
+            'metric': 'binary_logloss',
+            'boosting_type': 'gbdt',
+            'num_leaves': num_leaves,
             'learning_rate': learning_rate,
-            'n_estimators': n_estimators,
-            'eval_metric': 'logloss',
+            'feature_fraction': 0.9,
+            'bagging_fraction': 0.8,
+            'bagging_freq': 5,
+            'verbose': -1,
             **kwargs
         }
     
     def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None) -> None:
-        """Train the gradient boosting model.
+        """Train the LightGBM model.
         
         Args:
             X: Training features
@@ -57,22 +65,25 @@ class GradientBoostModel(BaseModel):
         """
         logger.info(f"Training {self.name} on {len(X)} samples")
         
-        # Convert to DMatrix
-        dtrain = xgb.DMatrix(X, label=y)
+        # Create dataset
+        train_data = lgb.Dataset(X, label=y)
         
         # Add validation set if provided
-        evals = [(dtrain, 'train')]
+        valid_sets = [train_data]
+        valid_names = ['train']
         if X_val is not None and y_val is not None:
-            dval = xgb.DMatrix(X_val, label=y_val)
-            evals.append((dval, 'val'))
+            val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+            valid_sets.append(val_data)
+            valid_names.append('val')
         
         # Train model
-        self.model = xgb.train(
+        self.model = lgb.train(
             self.params,
-            dtrain,
+            train_data,
             num_boost_round=self.n_estimators,
-            evals=evals,
-            verbose_eval=False
+            valid_sets=valid_sets,
+            valid_names=valid_names,
+            callbacks=[lgb.early_stopping(stopping_rounds=20), lgb.log_evaluation(period=0)]
         )
         
         # Store feature names if available
@@ -95,8 +106,7 @@ class GradientBoostModel(BaseModel):
             raise ValueError("Model must be trained before prediction")
         
         # Predict probability
-        dtest = xgb.DMatrix(X)
-        prob = self.model.predict(dtest)[0]
+        prob = self.model.predict(X, num_iteration=self.model.best_iteration)[0]
         
         # Determine outcome
         prediction = Outcome.HOME_WIN if prob > 0.5 else Outcome.AWAY_WIN
@@ -104,10 +114,14 @@ class GradientBoostModel(BaseModel):
         
         # Get feature importance
         key_features = self.get_feature_importance()
-        top_features = dict(sorted(key_features.items(), key=lambda x: x[1], reverse=True)[:5])
+        if key_features:
+            top_features = dict(sorted(key_features.items(), key=lambda x: x[1], reverse=True)[:5])
+        else:
+            top_features = {}
         
-        reasoning = f"Gradient boosting model predicts {prediction.value} with {confidence:.1%} confidence. "
-        reasoning += f"Top features: {', '.join(top_features.keys())}"
+        reasoning = f"LightGBM model predicts {prediction.value} with {confidence:.1%} confidence. "
+        if top_features:
+            reasoning += f"Top features: {', '.join(top_features.keys())}"
         
         return ModelPrediction(
             model_name=self.name,
@@ -130,8 +144,7 @@ class GradientBoostModel(BaseModel):
         if not self.is_trained:
             raise ValueError("Model must be trained before prediction")
         
-        dtest = xgb.DMatrix(X)
-        prob_home = float(self.model.predict(dtest)[0])
+        prob_home = float(self.model.predict(X, num_iteration=self.model.best_iteration)[0])
         
         return {
             Outcome.HOME_WIN: prob_home,
@@ -147,7 +160,14 @@ class GradientBoostModel(BaseModel):
         if not self.is_trained:
             return None
         
-        importance_dict = self.model.get_score(importance_type='weight')
+        importance_dict = self.model.feature_importance(importance_type='gain')
+        
+        # Map to feature names if available
+        if self.feature_names and len(self.feature_names) == len(importance_dict):
+            importance_dict = dict(zip(self.feature_names, importance_dict))
+        else:
+            # Use indices if no feature names
+            importance_dict = {f'feature_{i}': float(imp) for i, imp in enumerate(importance_dict)}
         
         # Normalize
         total = sum(importance_dict.values())
@@ -155,4 +175,3 @@ class GradientBoostModel(BaseModel):
             importance_dict = {k: v/total for k, v in importance_dict.items()}
         
         return importance_dict
-

@@ -37,6 +37,21 @@ models:
   statistical:
     model_type: "logistic"
     regularization: 0.1
+    
+  lightgbm:
+    n_estimators: 200
+    max_depth: 7
+    learning_rate: 0.05
+    num_leaves: 31
+    
+  svm:
+    C: 1.0
+    kernel: "rbf"
+    gamma: "scale"
+    
+  ensemble:
+    voting_strategy: "weighted"
+    weights: {}  # Empty dict means equal weights
 
 # Debate Configuration
 debate:
@@ -64,6 +79,14 @@ debate:
     statistical_conservative:
       personality: "traditional and risk-averse"
       style: "I stick to proven statistical relationships and historical trends"
+      
+    lightgbm_optimizer:
+      personality: "efficient and data-driven"
+      style: "I use advanced gradient boosting to find optimal patterns quickly"
+      
+    svm_strategist:
+      personality: "precise and boundary-focused"
+      style: "I excel at finding decision boundaries and separating winning from losing scenarios"
 
 # Evaluation Configuration
 evaluation:

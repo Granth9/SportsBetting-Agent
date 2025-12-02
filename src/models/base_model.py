@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import joblib
+import numpy as np
 
 from src.utils.data_types import ModelPrediction, Proposition, Outcome
 
@@ -85,17 +86,27 @@ class BaseModel(ABC):
         
         return prediction
     
-    @abstractmethod
-    def _prepare_features(self, features: Dict[str, Any]) -> Any:
+    def _prepare_features(self, features: Dict[str, Any]) -> np.ndarray:
         """Prepare features for model input.
+        
+        Common implementation that converts feature dictionary to numpy array.
+        Can be overridden by subclasses if different behavior is needed.
         
         Args:
             features: Raw feature dictionary
             
         Returns:
-            Formatted features for the model
+            NumPy array of feature values
         """
-        pass
+        feature_values = []
+        for key in sorted(features.keys()):
+            value = features[key]
+            if isinstance(value, (int, float)):
+                feature_values.append(float(value))
+            elif isinstance(value, bool):
+                feature_values.append(float(value))
+        
+        return np.array([feature_values])
     
     def get_feature_importance(self) -> Optional[Dict[str, float]]:
         """Get feature importance scores if available.

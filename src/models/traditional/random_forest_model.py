@@ -129,25 +129,6 @@ class RandomForestModel(BaseModel):
             Outcome.HOME_WIN: float(probs[1])
         }
     
-    def _prepare_features(self, features: Dict[str, Any]) -> np.ndarray:
-        """Prepare features for model input.
-        
-        Args:
-            features: Feature dictionary
-            
-        Returns:
-            NumPy array
-        """
-        feature_values = []
-        for key in sorted(features.keys()):
-            value = features[key]
-            if isinstance(value, (int, float)):
-                feature_values.append(float(value))
-            elif isinstance(value, bool):
-                feature_values.append(float(value))
-        
-        return np.array([feature_values])
-    
     def get_feature_importance(self) -> Optional[Dict[str, float]]:
         """Get feature importance scores.
         

@@ -1,5 +1,7 @@
 """Common data types and structures."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -46,6 +48,70 @@ class BettingLine:
     home_ml: float
     away_ml: float
     source: str = "unknown"
+
+
+@dataclass
+class BettingOption:
+    """A single betting option from a sportsbook."""
+    option_id: str
+    title: str  # e.g., "Patrick Mahomes Over 275.5 Passing Yards"
+    description: str  # Full description of the bet
+    bet_type: BetType
+    odds: float  # American odds format (e.g., -110, +150)
+    line_value: Optional[float] = None  # For spreads, totals, props
+    player_name: Optional[str] = None  # For player props
+    stat_type: Optional[str] = None  # e.g., "passing_yards", "touchdowns"
+    source: str = "unknown"  # sleeper, underdog, espn
+    popularity_rank: Optional[int] = None  # Rank by popularity
+    metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+    
+    def to_proposition(self, game_info: GameInfo) -> Proposition:
+        """Convert this betting option to a Proposition for analysis.
+        
+        Args:
+            game_info: Game information for this bet
+            
+        Returns:
+            Proposition object
+        """
+        # Create betting line if applicable
+        betting_line = None
+        if self.bet_type in [BetType.SPREAD, BetType.TOTAL, BetType.GAME_OUTCOME]:
+            # Extract line info from metadata or line_value
+            spread = self.metadata.get('spread', 0.0) if self.bet_type == BetType.SPREAD else 0.0
+            total = self.line_value if self.bet_type == BetType.TOTAL else 0.0
+            
+            # Convert odds to moneyline format
+            home_ml = self.metadata.get('home_ml', -110)
+            away_ml = self.metadata.get('away_ml', -110)
+            
+            betting_line = BettingLine(
+                spread=spread,
+                total=total,
+                home_ml=home_ml,
+                away_ml=away_ml,
+                source=self.source
+            )
+        
+        return Proposition(
+            prop_id=self.option_id,
+            game_info=game_info,
+            bet_type=self.bet_type,
+            line=betting_line,
+            line_value=self.line_value,
+            player_name=self.player_name,
+            stat_type=self.stat_type,
+            metadata={
+                **self.metadata,
+                'source': self.source,
+                'original_title': self.title,
+                'odds': self.odds
+            }
+        )
 
 
 @dataclass

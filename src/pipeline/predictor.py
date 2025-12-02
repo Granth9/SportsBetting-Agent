@@ -9,6 +9,9 @@ from src.models.neural_nets.deep_predictor import DeepPredictor
 from src.models.traditional.gradient_boost_model import GradientBoostModel
 from src.models.traditional.random_forest_model import RandomForestModel
 from src.models.traditional.statistical_model import StatisticalModel
+from src.models.traditional.lightgbm_model import LightGBMModel
+from src.models.traditional.svm_model import SVMModel
+from src.models.ensemble.ensemble_model import EnsembleModel
 from src.agents.moderator import DebateModerator
 from src.data.collectors.nfl_data_collector import NFLDataCollector
 from src.data.processors.feature_engineer import FeatureEngineer
@@ -76,7 +79,8 @@ class BettingCouncil:
                 hidden_layers=self.config.get('models.neural_net.hidden_layers', [256, 128, 64]),
                 dropout=self.config.get('models.neural_net.dropout', 0.3),
                 learning_rate=self.config.get('models.neural_net.learning_rate', 0.001),
-                epochs=self.config.get('models.neural_net.epochs', 100)
+                epochs=self.config.get('models.neural_net.epochs', 100),
+                early_stopping_patience=10
             ),
             GradientBoostModel(
                 name="Gradient Strategist",
@@ -93,8 +97,32 @@ class BettingCouncil:
             StatisticalModel(
                 name="Statistical Conservative",
                 regularization=self.config.get('models.statistical.regularization', 0.1)
+            ),
+            LightGBMModel(
+                name="LightGBM Optimizer",
+                n_estimators=self.config.get('models.lightgbm.n_estimators', 200),
+                max_depth=self.config.get('models.lightgbm.max_depth', 7),
+                learning_rate=self.config.get('models.lightgbm.learning_rate', 0.05),
+                num_leaves=self.config.get('models.lightgbm.num_leaves', 31)
+            ),
+            SVMModel(
+                name="SVM Strategist",
+                C=self.config.get('models.svm.C', 1.0),
+                kernel=self.config.get('models.svm.kernel', 'rbf'),
+                gamma=self.config.get('models.svm.gamma', 'scale')
             )
         ]
+        
+        # Optionally add ensemble model
+        ensemble_config = self.config.get('models.ensemble', {})
+        if ensemble_config.get('enabled', False):
+            ensemble = EnsembleModel(
+                name="Ensemble Council",
+                base_models=models,
+                voting_strategy=ensemble_config.get('voting_strategy', 'weighted'),
+                weights=ensemble_config.get('weights', {})
+            )
+            models.append(ensemble)
         
         return models
     

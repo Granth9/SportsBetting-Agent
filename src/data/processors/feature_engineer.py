@@ -275,6 +275,11 @@ class FeatureEngineer:
         Returns:
             Dictionary of player features
         """
+        # Check cache
+        cache_key = f"{player_name}_{game_date.strftime('%Y%m%d')}_{n_games}"
+        if cache_key in self.player_stats_cache:
+            return self.player_stats_cache[cache_key]
+        
         features = {}
         
         # Get player's recent games
@@ -299,6 +304,8 @@ class FeatureEngineer:
             features['player_avg_tds'] = 0
             features['player_games_played'] = 0
         
+        # Cache the result
+        self.player_stats_cache[cache_key] = features
         return features
     
     # Helper methods
@@ -311,6 +318,11 @@ class FeatureEngineer:
         schedule_df: pd.DataFrame
     ) -> Dict[str, float]:
         """Get team statistics up to a given date."""
+        # Check cache
+        cache_key = f"{team}_{game_date.strftime('%Y%m%d')}"
+        if cache_key in self.team_stats_cache:
+            return self.team_stats_cache[cache_key]
+        
         # Get all games for this team before the current date
         team_games = schedule_df[
             (pd.to_datetime(schedule_df['gameday']) < game_date) &
@@ -318,7 +330,9 @@ class FeatureEngineer:
         ]
         
         if len(team_games) == 0:
-            return {}
+            stats = {}
+            self.team_stats_cache[cache_key] = stats
+            return stats
         
         # Calculate aggregate stats
         stats = {}
@@ -357,6 +371,8 @@ class FeatureEngineer:
         else:
             stats['away_record'] = 0.5
         
+        # Cache the result
+        self.team_stats_cache[cache_key] = stats
         return stats
     
     def _get_recent_games(
