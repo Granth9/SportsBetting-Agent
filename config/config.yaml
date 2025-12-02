@@ -1,0 +1,97 @@
+# NFL Betting Agent Council Configuration
+
+# API Configuration
+anthropic:
+  model: "claude-3-5-sonnet-20241022"
+  max_tokens: 4096
+  temperature: 0.7
+
+# Data Configuration
+data:
+  raw_path: "data/raw"
+  processed_path: "data/processed"
+  cache_enabled: true
+  
+# Model Configuration
+models:
+  storage_path: "models"
+  retrain_threshold: 0.7  # Retrain if accuracy drops below this
+  
+  # Individual model configs
+  neural_net:
+    hidden_layers: [256, 128, 64]
+    dropout: 0.3
+    learning_rate: 0.001
+    epochs: 100
+    
+  gradient_boosting:
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.05
+    
+  random_forest:
+    n_estimators: 150
+    max_depth: 10
+    min_samples_split: 5
+    
+  statistical:
+    model_type: "logistic"
+    regularization: 0.1
+
+# Debate Configuration
+debate:
+  rounds: 4
+  max_agents: 6
+  temperature: 0.7
+  initial_statement_max_tokens: 500
+  rebuttal_max_tokens: 400
+  final_statement_max_tokens: 300
+  
+  # Agent personalities
+  agents:
+    neural_analyst:
+      personality: "aggressive and pattern-focused"
+      style: "I rely on deep learning to find hidden patterns others miss"
+      
+    gradient_strategist:
+      personality: "methodical and feature-driven"
+      style: "I analyze feature importance and data-driven correlations"
+      
+    forest_evaluator:
+      personality: "cautious and ensemble-minded"
+      style: "I provide robust predictions with uncertainty quantification"
+      
+    statistical_conservative:
+      personality: "traditional and risk-averse"
+      style: "I stick to proven statistical relationships and historical trends"
+
+# Evaluation Configuration
+evaluation:
+  backtest_years: 3
+  validation_split: 0.2
+  test_split: 0.1
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - roi
+    - sharpe_ratio
+
+# Betting Configuration
+betting:
+  types:
+    - game_outcome
+    - spread
+    - total
+    - player_props
+  
+  confidence_threshold: 0.65  # Minimum confidence to recommend a bet
+  kelly_criterion_fraction: 0.25  # Conservative Kelly for bet sizing
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  debate_logs_path: "logs/debates"
+  performance_logs_path: "logs/performance"
+
