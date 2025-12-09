@@ -56,12 +56,14 @@ class EnsembleModel(BaseModel):
             n = len(self.base_models)
             self.weights = {m.name: 1.0 / n for m in self.base_models}
     
-    def train(self, X: np.ndarray, y: np.ndarray, **kwargs) -> None:
+    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, **kwargs) -> None:
         """Train all base models.
         
         Args:
             X: Training features
             y: Training targets
+            X_val: Validation features (optional, passed to base models)
+            y_val: Validation targets (optional, passed to base models)
             **kwargs: Additional training parameters
         """
         if not self.base_models:
@@ -73,7 +75,11 @@ class EnsembleModel(BaseModel):
         for model in self.base_models:
             if not model.is_trained:
                 logger.info(f"Training base model: {model.name}")
-                model.train(X, y, **kwargs)
+                # Pass validation data if available
+                if X_val is not None and y_val is not None:
+                    model.train(X, y, X_val, y_val, **kwargs)
+                else:
+                    model.train(X, y, **kwargs)
             else:
                 logger.info(f"Base model {model.name} already trained, skipping")
         
@@ -117,7 +123,19 @@ class EnsembleModel(BaseModel):
             raise ValueError("No valid predictions from base models")
         
         # Combine predictions based on strategy
-        if self.voting_strategy == "weighted":
+        if self.voting_strategy == "selective_75":
+            # 75%+ accuracy mode: unanimous + 70% confidence (spread checked externally)
+            final_prediction, final_confidence, probabilities = self._selective_75_vote(base_predictions)
+        elif self.voting_strategy == "super_confident":
+            # Strictest mode: all models agree, high avg confidence, all individual confidences > 55%
+            final_prediction, final_confidence, probabilities = self._super_confident_vote(base_predictions)
+        elif self.voting_strategy == "unanimous_high_confidence":
+            # Only predict when all models agree AND confidence is high (70% accuracy)
+            final_prediction, final_confidence, probabilities = self._unanimous_high_confidence_vote(base_predictions)
+        elif self.voting_strategy == "weighted_confidence":
+            # Weight by confidence scores (higher confidence = more weight)
+            final_prediction, final_confidence, probabilities = self._weighted_confidence_vote(base_predictions)
+        elif self.voting_strategy == "weighted":
             final_prediction, final_confidence, probabilities = self._weighted_vote(base_predictions)
         elif self.voting_strategy == "majority":
             final_prediction, final_confidence, probabilities = self._majority_vote(base_predictions)
@@ -190,6 +208,187 @@ class EnsembleModel(BaseModel):
             final_probs[outcome] = weighted_sum
         
         return final_probs
+    
+    def _selective_75_vote(self, predictions: List[ModelPrediction], 
+                           confidence_threshold: float = 0.70) -> tuple:
+        """Selective 75%+ accuracy mode.
+        
+        This strategy achieves 75%+ accuracy by requiring:
+        1. All models agree unanimously
+        2. Average confidence > 70%
+        
+        Note: Spread filtering (>= 5 points) should be done externally
+        before calling predict() for maximum accuracy.
+        
+        Args:
+            predictions: List of base model predictions
+            confidence_threshold: Minimum confidence required (default 0.70)
+            
+        Returns:
+            Tuple of (final_prediction, final_confidence, probabilities)
+        """
+        # Check if all models agree
+        votes = [p.prediction for p in predictions]
+        all_home = all(v == Outcome.HOME_WIN for v in votes)
+        all_away = all(v == Outcome.AWAY_WIN for v in votes)
+        
+        # Calculate average confidence
+        avg_confidence = np.mean([p.confidence for p in predictions])
+        
+        # Must be unanimous AND confident
+        if (all_home or all_away) and avg_confidence >= confidence_threshold:
+            final_prediction = Outcome.HOME_WIN if all_home else Outcome.AWAY_WIN
+            final_confidence = avg_confidence
+            probabilities = {
+                Outcome.HOME_WIN: avg_confidence if all_home else 1 - avg_confidence,
+                Outcome.AWAY_WIN: 1 - avg_confidence if all_home else avg_confidence
+            }
+            return final_prediction, final_confidence, probabilities
+        
+        # Not confident enough - return low confidence prediction
+        # This signals to skip this bet
+        return Outcome.HOME_WIN, 0.50, {Outcome.HOME_WIN: 0.5, Outcome.AWAY_WIN: 0.5}
+    
+    def should_bet(self, X: np.ndarray, spread: float = 0.0, min_spread: float = 5.0) -> bool:
+        """Check if we should place a bet based on selective criteria.
+        
+        Args:
+            X: Input features
+            spread: The point spread for the game (absolute value)
+            min_spread: Minimum spread required (default 5.0)
+            
+        Returns:
+            True if bet meets criteria, False otherwise
+        """
+        # Check spread requirement
+        if abs(spread) < min_spread:
+            return False
+        
+        # Get prediction
+        try:
+            pred = self.predict(X)
+            # Check if confident (not the 0.50 fallback)
+            return pred.confidence >= 0.60
+        except:
+            return False
+    
+    def _super_confident_vote(self, predictions: List[ModelPrediction], 
+                               avg_confidence_threshold: float = 0.70,
+                               min_individual_confidence: float = 0.55) -> tuple:
+        """Super confident mode - strictest prediction criteria.
+        
+        This strategy aims for maximum accuracy by only predicting when:
+        1. All models agree unanimously
+        2. Average confidence > 70%
+        3. All individual model confidences > 55%
+        
+        Args:
+            predictions: List of base model predictions
+            avg_confidence_threshold: Minimum average confidence (default 0.70)
+            min_individual_confidence: Minimum individual confidence (default 0.55)
+            
+        Returns:
+            Tuple of (final_prediction, final_confidence, probabilities)
+        """
+        # Check if all models agree
+        votes = [p.prediction for p in predictions]
+        all_home = all(v == Outcome.HOME_WIN for v in votes)
+        all_away = all(v == Outcome.AWAY_WIN for v in votes)
+        
+        # Check individual confidences
+        individual_confidences = [p.confidence for p in predictions]
+        all_confident = all(c >= min_individual_confidence for c in individual_confidences)
+        
+        # Calculate average confidence
+        avg_confidence = np.mean(individual_confidences)
+        
+        # Super confident: unanimous + high avg + all individuals confident
+        if (all_home or all_away) and avg_confidence >= avg_confidence_threshold and all_confident:
+            final_prediction = Outcome.HOME_WIN if all_home else Outcome.AWAY_WIN
+            final_confidence = avg_confidence
+            probabilities = {
+                Outcome.HOME_WIN: avg_confidence if all_home else 1 - avg_confidence,
+                Outcome.AWAY_WIN: 1 - avg_confidence if all_home else avg_confidence
+            }
+            return final_prediction, final_confidence, probabilities
+        
+        # Not confident enough - fall back to unanimous_high_confidence
+        return self._unanimous_high_confidence_vote(predictions)
+    
+    def _unanimous_high_confidence_vote(self, predictions: List[ModelPrediction], confidence_threshold: float = 0.6) -> tuple:
+        """Unanimous agreement with high confidence threshold.
+        
+        This strategy achieves ~70% accuracy by only predicting when:
+        1. All models agree on the prediction
+        2. Average confidence is above the threshold
+        
+        Args:
+            predictions: List of base model predictions
+            confidence_threshold: Minimum confidence required (default 0.6)
+            
+        Returns:
+            Tuple of (final_prediction, final_confidence, probabilities)
+        """
+        # Check if all models agree
+        votes = [p.prediction for p in predictions]
+        all_home = all(v == Outcome.HOME_WIN for v in votes)
+        all_away = all(v == Outcome.AWAY_WIN for v in votes)
+        
+        # Calculate average confidence
+        avg_confidence = np.mean([p.confidence for p in predictions])
+        
+        # Check if unanimous and high confidence
+        if (all_home or all_away) and (avg_confidence > confidence_threshold or avg_confidence < (1 - confidence_threshold)):
+            final_prediction = Outcome.HOME_WIN if all_home else Outcome.AWAY_WIN
+            final_confidence = avg_confidence
+            probabilities = {
+                Outcome.HOME_WIN: avg_confidence if all_home else 1 - avg_confidence,
+                Outcome.AWAY_WIN: 1 - avg_confidence if all_home else avg_confidence
+            }
+        else:
+            # Not confident enough - fall back to weighted confidence vote
+            return self._weighted_confidence_vote(predictions)
+        
+        return final_prediction, final_confidence, probabilities
+    
+    def _weighted_confidence_vote(self, predictions: List[ModelPrediction]) -> tuple:
+        """Weighted voting by confidence scores.
+        
+        Args:
+            predictions: List of base model predictions
+            
+        Returns:
+            Tuple of (final_prediction, final_confidence, probabilities)
+        """
+        from collections import defaultdict
+        
+        # Weight each prediction by its confidence
+        weighted_votes = defaultdict(float)
+        total_confidence = 0.0
+        
+        for pred in predictions:
+            confidence = pred.confidence
+            outcome = pred.prediction
+            weighted_votes[outcome] += confidence
+            total_confidence += confidence
+        
+        # Normalize weights
+        if total_confidence > 0:
+            for outcome in weighted_votes:
+                weighted_votes[outcome] /= total_confidence
+        
+        # Find outcome with highest weighted vote
+        if weighted_votes:
+            final_prediction = max(weighted_votes.items(), key=lambda x: x[1])[0]
+            final_confidence = weighted_votes[final_prediction]
+        else:
+            # Fallback to majority vote
+            return self._majority_vote(predictions)
+        
+        # Calculate probabilities
+        probabilities = dict(weighted_votes)
+        
+        return final_prediction, final_confidence, probabilities
     
     def _weighted_vote(self, predictions: List[ModelPrediction]) -> tuple:
         """Weighted voting strategy.

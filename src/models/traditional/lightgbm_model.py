@@ -51,6 +51,8 @@ class LightGBMModel(BaseModel):
             'bagging_fraction': 0.8,
             'bagging_freq': 5,
             'verbose': -1,
+            'num_threads': 1,  # Use single thread to avoid crashes
+            'force_col_wise': True,  # Force column-wise for stability
             **kwargs
         }
     
@@ -106,7 +108,12 @@ class LightGBMModel(BaseModel):
             raise ValueError("Model must be trained before prediction")
         
         # Predict probability
-        prob = self.model.predict(X, num_iteration=self.model.best_iteration)[0]
+        # Handle best_iteration - it might not exist if early stopping didn't trigger
+        best_iter = getattr(self.model, 'best_iteration', None)
+        if best_iter is not None:
+            prob = self.model.predict(X, num_iteration=best_iter)[0]
+        else:
+            prob = self.model.predict(X)[0]
         
         # Determine outcome
         prediction = Outcome.HOME_WIN if prob > 0.5 else Outcome.AWAY_WIN
@@ -144,7 +151,12 @@ class LightGBMModel(BaseModel):
         if not self.is_trained:
             raise ValueError("Model must be trained before prediction")
         
-        prob_home = float(self.model.predict(X, num_iteration=self.model.best_iteration)[0])
+        # Handle best_iteration - it might not exist if early stopping didn't trigger
+        best_iter = getattr(self.model, 'best_iteration', None)
+        if best_iter is not None:
+            prob_home = float(self.model.predict(X, num_iteration=best_iter)[0])
+        else:
+            prob_home = float(self.model.predict(X)[0])
         
         return {
             Outcome.HOME_WIN: prob_home,

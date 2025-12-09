@@ -14,7 +14,7 @@ from src.utils.data_types import (
     BettingLine,
     BetType
 )
-from src.data.collectors.betting_scraper_manager import BettingScraperManager
+from src.utils.bet_parser import BetParser
 from src.utils.logger import setup_logger
 from src.utils.config_loader import get_config
 
@@ -223,221 +223,121 @@ def backtest_command(args):
     # print(f"Final Bankroll: ${metrics['final_bankroll']:.2f}")
 
 
-def browse_command(args):
-    """Handle the browse command - list betting options from a site.
+def analyze_manual_command(args):
+    """Handle the analyze-manual command for natural language bet input.
     
     Args:
         args: Parsed command-line arguments
     """
-    print("\n" + "="*80)
-    print("NFL BETTING AGENT COUNCIL - BROWSE BETS")
-    print("="*80 + "\n")
-    
-    print(f"Site: {args.site}")
-    print(f"Game: {args.away_team} @ {args.home_team}")
-    if args.date:
-        print(f"Date: {args.date}")
-    print()
-    
-    # Initialize scraper manager
-    manager = BettingScraperManager()
-    
-    # Parse date if provided
-    game_date = None
-    if args.date:
-        try:
-            game_date = datetime.strptime(args.date, "%Y-%m-%d")
-        except ValueError:
-            print(f"Warning: Invalid date format. Use YYYY-MM-DD. Proceeding without date filter.")
-    
-    # Get bets
-    print(f"Fetching betting options from {args.site}...")
-    bets = manager.get_bets_for_game(
-        site=args.site,
-        home_team=args.home_team,
-        away_team=args.away_team,
-        game_date=game_date,
-        limit=args.limit
-    )
-    
-    if not bets:
-        print(f"\nNo betting options found for {args.away_team} @ {args.home_team} on {args.site}.")
-        print("\nPossible reasons:")
-        print("  - Game not found on this site")
-        print("  - Site structure may have changed (scraper needs update)")
-        print("  - Network/API issues")
-        return
-    
-    # Display bets
-    display_text = manager.format_bets_for_display(bets)
-    print(display_text)
-    
-    # Save to file if requested
-    if args.save:
-        output_path = Path(args.save)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        import json
-        from dataclasses import asdict
-        
-        bets_data = [asdict(bet) for bet in bets]
-        with open(output_path, 'w') as f:
-            json.dump(bets_data, f, indent=2, default=str)
-        
-        print(f"\nBetting options saved to {output_path}")
-
-
-def analyze_bet_command(args):
-    """Handle the analyze-bet command - analyze a specific bet option.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    # Lazy import
+    # Lazy import to avoid requiring torch for browse command
     from src.pipeline.predictor import BettingCouncil
     
     print("\n" + "="*80)
-    print("NFL BETTING AGENT COUNCIL - ANALYZE BET")
+    print("NFL BETTING AGENT COUNCIL - MANUAL BET ANALYSIS")
     print("="*80 + "\n")
     
-    # Initialize scraper manager
-    manager = BettingScraperManager()
-    
-    # Parse date if provided
-    game_date = None
-    if args.date:
-        try:
-            game_date = datetime.strptime(args.date, "%Y-%m-%d")
-        except ValueError:
-            print(f"Warning: Invalid date format. Use YYYY-MM-DD.")
-            sys.exit(1)
-    
-    # Get bets
-    print(f"Fetching betting options from {args.site}...")
-    bets = manager.get_bets_for_game(
-        site=args.site,
-        home_team=args.home_team,
-        away_team=args.away_team,
-        game_date=game_date,
-        limit=50  # Get more options to find the one we want
-    )
-    
-    if not bets:
-        print(f"\nNo betting options found.")
-        sys.exit(1)
-    
-    # Find the selected bet
-    selected_bet = None
-    
-    if args.bet_index:
-        # Select by index
-        try:
-            index = int(args.bet_index) - 1
-            if 0 <= index < len(bets):
-                selected_bet = bets[index]
-            else:
-                print(f"Error: Bet index {args.bet_index} out of range (1-{len(bets)})")
-                sys.exit(1)
-        except ValueError:
-            print(f"Error: Invalid bet index '{args.bet_index}'")
-            sys.exit(1)
-    elif args.bet_id:
-        # Select by ID
-        selected_bet = next((bet for bet in bets if bet.option_id == args.bet_id), None)
-        if not selected_bet:
-            print(f"Error: Bet with ID '{args.bet_id}' not found")
-            sys.exit(1)
-    else:
-        # Interactive selection
-        print("\nAvailable betting options:")
-        print(manager.format_bets_for_display(bets))
-        
-        while True:
-            try:
-                choice = input(f"\nSelect a bet to analyze (1-{len(bets)}) or 'q' to quit: ").strip()
-                if choice.lower() == 'q':
-                    sys.exit(0)
-                
-                index = int(choice) - 1
-                if 0 <= index < len(bets):
-                    selected_bet = bets[index]
-                    break
-                else:
-                    print(f"Please enter a number between 1 and {len(bets)}")
-            except ValueError:
-                print("Please enter a valid number or 'q' to quit")
-            except KeyboardInterrupt:
-                print("\nCancelled.")
-                sys.exit(0)
-    
-    # Convert bet option to proposition
+    # Create game info
+    game_date = datetime.strptime(args.date, "%Y-%m-%d") if args.date else datetime.now()
     game_info = GameInfo(
         game_id=f"{args.season}_{args.week:02d}_{args.away_team}_{args.home_team}",
         home_team=args.home_team,
         away_team=args.away_team,
-        game_date=game_date or datetime.now(),
+        game_date=game_date,
         season=args.season,
         week=args.week
     )
     
-    proposition = selected_bet.to_proposition(game_info)
+    print(f"Game: {args.away_team} @ {args.home_team}")
+    print(f"Season: {args.season}, Week: {args.week}")
+    print(f"Bet Description: {args.bet}")
+    print("\n" + "-"*80)
+    print("Parsing bet description...")
+    print("-"*80 + "\n")
     
-    print(f"\n{'='*80}")
-    print(f"Selected Bet: {selected_bet.title}")
-    print(f"Type: {selected_bet.bet_type.value} | Odds: {selected_bet.odds:+.0f}")
-    print(f"{'='*80}\n")
+    # Parse the bet description
+    parser = BetParser()
+    proposition, error = parser.parse_bet_description(
+        args.bet,
+        game_info,
+        args.home_team,
+        args.away_team
+    )
     
-    # Now analyze using the existing analyze functionality
+    if not proposition:
+        print(f"❌ Error: {error}")
+        print("\nExamples of valid bet descriptions:")
+        print("  - 'Will Cortland Sutton score a touchdown?'")
+        print("  - 'Dolphins will win'")
+        print("  - 'Who will win: Dolphins or Jets?'")
+        print("  - 'Dolphins -3.5'")
+        print("  - 'Over 45.5'")
+        sys.exit(1)
+    
+    print(f"✅ Successfully parsed bet!")
+    print(f"   Bet Type: {proposition.bet_type.value}")
+    if proposition.player_name:
+        print(f"   Player: {proposition.player_name}")
+    if proposition.line_value is not None:
+        print(f"   Line Value: {proposition.line_value}")
+    if proposition.stat_type:
+        print(f"   Stat Type: {proposition.stat_type}")
+    print()
+    
+    # Now run the analysis
+    print("-"*80)
     print("Initializing models and agents...")
-    council = BettingCouncil(debate_rounds=args.rounds if hasattr(args, 'rounds') else 4)
+    print("-"*80 + "\n")
+    
+    council = BettingCouncil(debate_rounds=args.rounds)
     
     if args.model_dir and Path(args.model_dir).exists():
         print(f"Loading models from {args.model_dir}...")
         council.load_models(args.model_dir)
     else:
-        print("Warning: No trained models loaded.")
+        print("Warning: No trained models loaded. Analysis may not be accurate.")
+        print("Train models first using: python -m src.cli train --seasons 2020 2021 2022 2023")
     
     print("\nRunning analysis...\n")
     
     try:
         recommendation = council.analyze(proposition)
         
-        # Display results (reuse analyze_command display logic)
+        # Display results
         print("\n" + "="*80)
         print("ANALYSIS RESULTS")
         print("="*80 + "\n")
         
-        print(f"Final Recommendation: {recommendation.recommended_action}")
-        print(f"Predicted Outcome: {recommendation.debate_result.final_prediction.value}")
-        print(f"Confidence: {recommendation.debate_result.final_confidence:.1%}")
-        print(f"Consensus Level: {recommendation.debate_result.consensus_level:.1%}")
+        print(f"Bet: {args.bet}")
+        print(f"Game: {args.away_team} @ {args.home_team}")
+        print()
         
-        if recommendation.bet_size:
-            print(f"Suggested Bet Size: {recommendation.bet_size:.1%} of bankroll")
+        print(f"Recommended Action: {recommendation.recommended_action.value.upper()}")
+        print(f"Confidence: {recommendation.confidence:.1%}")
+        print(f"Expected Value: {recommendation.expected_value:.2f}")
+        print()
         
-        if recommendation.expected_value:
-            print(f"Expected Value: {recommendation.expected_value:.3f}")
+        if recommendation.debate_result:
+            print("Model Consensus:")
+            for prediction in recommendation.debate_result.model_predictions:
+                print(f"  - {prediction.model_name}: {prediction.prediction.value} "
+                      f"(confidence: {prediction.confidence:.1%})")
+            print()
         
-        print(f"\nRisk Assessment: {recommendation.risk_assessment}")
-        print(f"\nReasoning:\n{recommendation.debate_result.reasoning_summary}")
-        
-        if args.verbose:
-            print("\n" + "-"*80)
+        if args.verbose and recommendation.debate_result:
+            print("="*80)
             print("DEBATE TRANSCRIPT")
-            print("-"*80 + "\n")
-            
-            current_round = 0
-            for arg in recommendation.debate_result.debate_transcript:
-                if arg.round_number != current_round:
-                    print(f"\n--- Round {arg.round_number} ---\n")
-                    current_round = arg.round_number
-                
-                print(f"{arg.agent_name} ({arg.confidence:.1%} confident):")
-                print(f"{arg.statement}\n")
-    
+            print("="*80 + "\n")
+            for round_num, round_data in enumerate(recommendation.debate_result.debate_rounds, 1):
+                print(f"Round {round_num}:")
+                for argument in round_data:
+                    print(f"  [{argument.agent_name}]: {argument.argument}")
+                print()
+        
+        print("="*80)
+        
     except Exception as e:
         logger.error(f"Error during analysis: {e}", exc_info=True)
-        print(f"\nError: {e}")
+        print(f"\n❌ Error during analysis: {e}")
         sys.exit(1)
 
 
@@ -458,6 +358,162 @@ def train_command(args):
     print("2. Engineer features")
     print("3. Train each model")
     print("4. Save trained models")
+
+
+def predict_command(args):
+    """Handle the predict command for quick natural language predictions.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    from src.pipeline.quick_predict import QuickPredictor
+    
+    # Join query parts
+    query = ' '.join(args.query)
+    
+    print("\n" + "="*60)
+    print("NFL BETTING PREDICTION")
+    print("="*60)
+    
+    # Create predictor and make prediction
+    predictor = QuickPredictor(args.model_dir)
+    result = predictor.predict(query)
+    
+    if not result['success']:
+        print(f"\n❌ {result['error']}")
+        if 'hint' in result:
+            print(f"💡 {result['hint']}")
+        return
+    
+    # Check if this is a player prop
+    if result.get('query_type') == 'player_prop':
+        print(f"\n🏈 PLAYER PROP: {result['player_name']}")
+        print(f"📍 {result['team']} | {result['position']}")
+        print("-"*60)
+        
+        # Check if this is a TD prediction
+        if result.get('is_td_prop'):
+            print(f"\n📊 {result['stat_type']}")
+            print(f"\n🎯 PREDICTION: {result['prediction']} (scores TD)")
+            print(f"📈 Confidence: {result['confidence']:.0%}")
+            print()
+            print(f"🏈 TD Rate: {result['td_rate']:.0%} ({result['games_with_td']} TDs in {result['games_analyzed']} games)")
+            print(f"📊 Total TDs This Season: {result['total_tds']}")
+            print(f"📈 Avg TDs/Game: {result['avg_tds_per_game']:.2f}")
+            print()
+            # Handle both string format ("W1: 1 TD") and numeric format
+            last_5 = result['last_5_games']
+            if last_5 and isinstance(last_5[0], str):
+                print(f"📅 Last 5 Games: {', '.join(last_5)}")
+            else:
+                print(f"📅 Last 5 Games: {[f'{t} TD' for t in last_5]}")
+        else:
+            # Yards prediction
+            print(f"\n📊 {result['stat_type']}: {result['line']} yards")
+            print(f"\n🎯 PREDICTION: {result['prediction']}")
+            print(f"📈 Confidence: {result['confidence']:.0%}")
+            print()
+            print(f"📈 Season Average: {result['avg_yards']:.1f} yards")
+            print(f"📊 Median: {result['median_yards']:.1f} yards")
+            print(f"📋 Games Analyzed: {result['games_analyzed']}")
+            print(f"✓ Hit Rate: {result['hit_rate']:.0%} over this line")
+            print()
+            # Handle both string format ("W1: 16") and numeric format
+            last_5 = result['last_5_games']
+            if last_5 and isinstance(last_5[0], str):
+                print(f"📅 Last 5 Games: {', '.join(last_5)}")
+            else:
+                print(f"📅 Last 5 Games: {[f'{y:.0f}' for y in last_5]}")
+        
+        # Recommendation
+        print()
+        if result['confidence'] >= 0.65:
+            print("✅ RECOMMENDED BET")
+        else:
+            print("⚠️  MARGINAL - Consider passing")
+    else:
+        # Game outcome prediction
+        home_full = result.get('home_team_full', result.get('home_team', 'Unknown'))
+        away_full = result.get('away_team_full', result.get('away_team', 'Unknown'))
+        
+        print(f"\n{away_full} @ {home_full}")
+        print(f"Week {result['week']} | {result.get('gameday', 'TBD')}")
+        print("-"*60)
+        
+        if result.get('completed'):
+            print(f"\n📊 FINAL: {result['score']}")
+            print(f"🏆 {result['result']}")
+        else:
+            print(f"\n🎯 PREDICTION: {result['prediction_full']} WIN")
+            print(f"📈 Confidence: {result['confidence']:.0%}")
+            print(f"📊 Spread: {result['spread']:+.1f}")
+            print()
+            
+            if result['meets_criteria']:
+                print("✅ HIGH CONFIDENCE PICK")
+                print("   Meets selective 75% strategy criteria")
+            else:
+                print("⚠️  LOWER CONFIDENCE")
+                print("   Consider skipping this game")
+    
+    print("\n" + "="*60)
+
+
+def parlay_command(args):
+    """Handle the parlay command for building multi-leg parlays.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    from src.pipeline.parlay_builder import ParlayBuilder
+    
+    # Join query parts
+    query = ' '.join(args.query)
+    
+    print("\n" + "="*60)
+    print("🎰 PARLAY BUILDER")
+    print("="*60)
+    
+    # Create builder and parse query
+    builder = ParlayBuilder(args.model_dir)
+    params = builder.parse_parlay_query(query)
+    
+    print(f"\n📋 Building {params['num_legs']}-leg parlay...")
+    
+    # Generate options based on query type
+    if params['is_single_game'] and len(params['teams']) == 2:
+        team1, team2 = params['teams']
+        print(f"🏈 Game: {builder.TEAM_FULL_NAMES.get(team1, team1)} vs {builder.TEAM_FULL_NAMES.get(team2, team2)}")
+        print("\n⏳ Generating betting options...")
+        options = builder.generate_game_options(team1, team2)
+    elif params['is_week_parlay'] and params['week']:
+        print(f"📅 Week {params['week']} parlay")
+        print("\n⏳ Generating betting options for all games...")
+        options = builder.generate_week_options(params['week'])
+    else:
+        print("\n❌ Could not parse parlay query")
+        print("💡 Try: '4 leg parlay Eagles vs Chargers' or '5 leg parlay week 14'")
+        return
+    
+    if not options:
+        print("\n❌ No betting options generated. Please check team names or week number.")
+        return
+    
+    # Auto-select top N options by confidence
+    selected_options = options[:params['num_legs']]
+    parlay = builder.build_parlay(selected_options)
+    
+    if parlay['success']:
+        print(builder.display_parlay(parlay))
+        
+        # Show all available options for reference
+        print("\n" + "-"*60)
+        print("📋 ALL AVAILABLE OPTIONS (if you want to swap):")
+        print(builder.display_options(options, max_display=15))
+    else:
+        print(f"\n❌ Error building parlay: {parlay.get('error', 'Unknown error')}")
+    
+    print("\n" + "="*60)
 
 
 def main():
@@ -495,35 +551,32 @@ def main():
     backtest_parser.add_argument('--model-dir', required=True, help='Directory with trained models')
     backtest_parser.add_argument('--output', help='Output file for results (CSV)')
     
-    # Browse command
-    browse_parser = subparsers.add_parser('browse', help='Browse betting options from a site')
-    browse_parser.add_argument('--site', choices=['sleeper', 'underdog', 'espn'], required=True,
-                              help='Betting site to scrape')
-    browse_parser.add_argument('--home-team', required=True, help='Home team abbreviation (e.g., NYG)')
-    browse_parser.add_argument('--away-team', required=True, help='Away team abbreviation (e.g., NE)')
-    browse_parser.add_argument('--date', help='Game date (YYYY-MM-DD)')
-    browse_parser.add_argument('--limit', type=int, default=20, help='Maximum number of bets to show')
-    browse_parser.add_argument('--save', help='Save bets to JSON file')
-    
-    # Analyze-bet command
-    analyze_bet_parser = subparsers.add_parser('analyze-bet', help='Analyze a specific bet from a site')
-    analyze_bet_parser.add_argument('--site', choices=['sleeper', 'underdog', 'espn'], required=True,
-                                    help='Betting site')
-    analyze_bet_parser.add_argument('--home-team', required=True, help='Home team abbreviation')
-    analyze_bet_parser.add_argument('--away-team', required=True, help='Away team abbreviation')
-    analyze_bet_parser.add_argument('--season', type=int, default=datetime.now().year, help='Season year')
-    analyze_bet_parser.add_argument('--week', type=int, required=True, help='Week number')
-    analyze_bet_parser.add_argument('--date', help='Game date (YYYY-MM-DD)')
-    analyze_bet_parser.add_argument('--bet-index', help='Bet index to analyze (from browse command)')
-    analyze_bet_parser.add_argument('--bet-id', help='Bet ID to analyze')
-    analyze_bet_parser.add_argument('--rounds', type=int, default=4, help='Number of debate rounds')
-    analyze_bet_parser.add_argument('--model-dir', default='models', help='Directory with trained models')
-    analyze_bet_parser.add_argument('--verbose', '-v', action='store_true', help='Show full debate transcript')
+    # Analyze-manual command
+    analyze_manual_parser = subparsers.add_parser('analyze-manual', help='Analyze a manually entered bet using natural language')
+    analyze_manual_parser.add_argument('--bet', required=True, help='Bet description in natural language (e.g., "Will Cortland Sutton score a touchdown?" or "Dolphins will win")')
+    analyze_manual_parser.add_argument('--home-team', required=True, help='Home team abbreviation (e.g., NYJ)')
+    analyze_manual_parser.add_argument('--away-team', required=True, help='Away team abbreviation (e.g., MIA)')
+    analyze_manual_parser.add_argument('--season', type=int, default=datetime.now().year, help='Season year')
+    analyze_manual_parser.add_argument('--week', type=int, required=True, help='Week number')
+    analyze_manual_parser.add_argument('--date', help='Game date (YYYY-MM-DD)')
+    analyze_manual_parser.add_argument('--rounds', type=int, default=4, help='Number of debate rounds')
+    analyze_manual_parser.add_argument('--model-dir', default='models', help='Directory with trained models')
+    analyze_manual_parser.add_argument('--verbose', '-v', action='store_true', help='Show full debate transcript')
     
     # Train command
     train_parser = subparsers.add_parser('train', help='Train the models')
     train_parser.add_argument('--seasons', nargs='+', type=int, required=True, help='Seasons to train on')
-    train_parser.add_argument('--output-dir', default='models', help='Directory to save trained models')
+    train_parser.add_argument('--output-dir', default='models/trained', help='Directory to save trained models')
+    
+    # Predict command (simple natural language)
+    predict_parser = subparsers.add_parser('predict', help='Quick prediction from natural language query')
+    predict_parser.add_argument('query', nargs='+', help='Natural language query (e.g., "Chiefs vs Raiders")')
+    predict_parser.add_argument('--model-dir', default='models/trained', help='Directory with trained models')
+    
+    # Parlay builder command
+    parlay_parser = subparsers.add_parser('parlay', help='Build a parlay from betting options')
+    parlay_parser.add_argument('query', nargs='+', help='Parlay query (e.g., "4 leg parlay Eagles vs Chargers" or "5 leg parlay week 14")')
+    parlay_parser.add_argument('--model-dir', default='models/trained', help='Directory with trained models')
     
     # Parse arguments
     args = parser.parse_args()
@@ -539,10 +592,12 @@ def main():
         backtest_command(args)
     elif args.command == 'train':
         train_command(args)
-    elif args.command == 'browse':
-        browse_command(args)
-    elif args.command == 'analyze-bet':
-        analyze_bet_command(args)
+    elif args.command == 'analyze-manual':
+        analyze_manual_command(args)
+    elif args.command == 'predict':
+        predict_command(args)
+    elif args.command == 'parlay':
+        parlay_command(args)
 
 
 if __name__ == '__main__':

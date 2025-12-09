@@ -47,17 +47,19 @@ class SVMModel(BaseModel):
             random_state=42,
             **kwargs
         )
-        
+    
         # SVM requires feature scaling
         self.scaler = StandardScaler()
         self._scaler_fitted = False
     
-    def train(self, X: np.ndarray, y: np.ndarray, **kwargs) -> None:
+    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, **kwargs) -> None:
         """Train the SVM model.
         
         Args:
             X: Training features
             y: Training targets
+            X_val: Validation features (optional, not used by this model)
+            y_val: Validation targets (optional, not used by this model)
             **kwargs: Additional training parameters
         """
         logger.info(f"Training {self.name} on {len(X)} samples")
@@ -170,15 +172,15 @@ class SVMModel(BaseModel):
         if not hasattr(self.model, 'coef_'):
             return None
         
-        coef = np.abs(self.model.coef_[0])
-        
-        # Normalize
-        total = np.sum(coef)
-        if total > 0:
-            coef = coef / total
+            coef = np.abs(self.model.coef_[0])
+            
+                # Normalize
+                total = np.sum(coef)
+                if total > 0:
+                    coef = coef / total
         
         if self.feature_names and len(self.feature_names) == len(coef):
-            return dict(zip(self.feature_names, coef))
+                return dict(zip(self.feature_names, coef))
         
         return {f'feature_{i}': float(c) for i, c in enumerate(coef)}
     

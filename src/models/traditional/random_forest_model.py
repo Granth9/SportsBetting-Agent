@@ -46,12 +46,14 @@ class RandomForestModel(BaseModel):
             **kwargs
         )
     
-    def train(self, X: np.ndarray, y: np.ndarray, **kwargs) -> None:
+    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, **kwargs) -> None:
         """Train the random forest model.
         
         Args:
             X: Training features
             y: Training targets
+            X_val: Validation features (optional, not used by this model)
+            y_val: Validation targets (optional, not used by this model)
             **kwargs: Additional training parameters
         """
         logger.info(f"Training {self.name} on {len(X)} samples")

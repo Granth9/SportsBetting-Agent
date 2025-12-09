@@ -37,12 +37,13 @@ class GradientBoostModel(BaseModel):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
+        # Note: n_estimators is passed separately to xgb.train(), not in params
         self.params = {
             'objective': 'binary:logistic',
             'max_depth': max_depth,
             'learning_rate': learning_rate,
-            'n_estimators': n_estimators,
             'eval_metric': 'logloss',
+            'tree_method': 'hist',  # Use histogram method for better performance
             **kwargs
         }
     
@@ -67,13 +68,17 @@ class GradientBoostModel(BaseModel):
             evals.append((dval, 'val'))
         
         # Train model
-        self.model = xgb.train(
-            self.params,
-            dtrain,
-            num_boost_round=self.n_estimators,
-            evals=evals,
-            verbose_eval=False
-        )
+        try:
+            self.model = xgb.train(
+                self.params,
+                dtrain,
+                num_boost_round=self.n_estimators,
+                evals=evals,
+                verbose_eval=False
+            )
+        except Exception as e:
+            logger.error(f"Error during XGBoost training: {e}")
+            raise
         
         # Store feature names if available
         if hasattr(X, 'columns'):
