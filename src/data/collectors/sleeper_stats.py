@@ -46,6 +46,8 @@ class SleeperPlayerStats:
         "ladd mcconkey": "11635",
         
         # Running Backs
+        "r.j. harvey": "12489",
+        "rj harvey": "12489",
         "omarion hampton": "12507",
         "saquon barkley": "4866",
         "derrick henry": "3198",

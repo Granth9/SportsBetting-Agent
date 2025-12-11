@@ -397,10 +397,49 @@ def predict_command(args):
             print(f"\n🎯 PREDICTION: {result['prediction']} (scores TD)")
             print(f"📈 Confidence: {result['confidence']:.0%}")
             print()
-            print(f"🏈 TD Rate: {result['td_rate']:.0%} ({result['games_with_td']} TDs in {result['games_analyzed']} games)")
+            print(f"🏈 Season TD Rate: {result['td_rate']:.0%} ({result['games_with_td']} TDs in {result['games_analyzed']} games)")
+            if 'weighted_td_rate' in result:
+                print(f"📊 Weighted TD Rate (75% recent, exponential): {result['weighted_td_rate']:.0%}")
+                if 'recent_td_rate' in result:
+                    print(f"📈 Recent TD Rate (last 5): {result['recent_td_rate']:.0%}")
             print(f"📊 Total TDs This Season: {result['total_tds']}")
             print(f"📈 Avg TDs/Game: {result['avg_tds_per_game']:.2f}")
+            if 'recent_td_trend' in result and result['recent_td_trend'] != 'stable':
+                trend_emoji = '📈' if result['recent_td_trend'] == 'improving' else '📉'
+                print(f"{trend_emoji} Recent TD Trend: {result['recent_td_trend'].upper()}")
             print()
+            
+            # Display new features if available
+            if 'defensive_td_rate' in result and result.get('opponent_team') != 'Unknown':
+                opp_team = result.get('opponent_team', 'Opponent')
+                def_rate = result.get('defensive_td_rate', 0.5)
+                print(f"🛡️  Opponent Defense ({opp_team}): Allows {def_rate:.0%} TD rate")
+            
+            if 'redzone_usage' in result:
+                rz_usage = result.get('redzone_usage', 0.3)
+                print(f"🎯 Redzone Usage: {rz_usage:.0%} of team's {result['stat_type'].lower()}s")
+            
+            # Display team redzone efficiency
+            if 'team_redzone_efficiency' in result and result.get('player_team') not in ['NFL', 'Unknown']:
+                team = result.get('player_team', 'Team')
+                rz_eff = result.get('team_redzone_efficiency', 0.6)
+                print(f"⚡ Team Redzone Efficiency ({team}): {rz_eff:.0%} TD conversion rate")
+            
+            # Display redzone play type distribution
+            if 'team_redzone_play_type' in result and result.get('player_team') not in ['NFL', 'Unknown']:
+                play_type = result.get('team_redzone_play_type', 0.5)
+                stat_type_lower = result['stat_type'].lower()
+                if 'rushing' in stat_type_lower:
+                    # play_type is rush ratio for rushing TDs
+                    print(f"🏃 Redzone Play Type: {play_type:.0%} rush / {1-play_type:.0%} pass")
+                elif 'receiving' in stat_type_lower:
+                    # play_type is pass ratio for receiving TDs (already calculated in method)
+                    print(f"🏃 Redzone Play Type: {1-play_type:.0%} rush / {play_type:.0%} pass")
+                else:
+                    # For anytime TD, play_type is rush ratio
+                    print(f"🏃 Redzone Play Type: {play_type:.0%} rush / {1-play_type:.0%} pass")
+            print()
+            
             # Handle both string format ("W1: 1 TD") and numeric format
             last_5 = result['last_5_games']
             if last_5 and isinstance(last_5[0], str):
@@ -414,9 +453,16 @@ def predict_command(args):
             print(f"📈 Confidence: {result['confidence']:.0%}")
             print()
             print(f"📈 Season Average: {result['avg_yards']:.1f} yards")
+            if 'weighted_avg_yards' in result:
+                print(f"📊 Weighted Average (75% recent, exponential): {result['weighted_avg_yards']:.1f} yards")
+                if 'recent_avg_yards' in result:
+                    print(f"📈 Recent Average (last 5): {result['recent_avg_yards']:.1f} yards")
             print(f"📊 Median: {result['median_yards']:.1f} yards")
             print(f"📋 Games Analyzed: {result['games_analyzed']}")
             print(f"✓ Hit Rate: {result['hit_rate']:.0%} over this line")
+            if 'recent_trend' in result and result['recent_trend'] != 'stable':
+                trend_emoji = '📈' if result['recent_trend'] == 'improving' else '📉'
+                print(f"{trend_emoji} Recent Trend: {result['recent_trend'].upper()}")
             print()
             # Handle both string format ("W1: 16") and numeric format
             last_5 = result['last_5_games']
@@ -449,6 +495,34 @@ def predict_command(args):
             print(f"📊 Spread: {result['spread']:+.1f}")
             print()
             
+            # Display performance analysis if available
+            perf_analysis = result.get('performance_analysis')
+            if perf_analysis:
+                print("📊 TEAM PERFORMANCE ANALYSIS")
+                print("-" * 60)
+                home_perf = perf_analysis.get('home', {})
+                away_perf = perf_analysis.get('away', {})
+                
+                home_team = result.get('home_team', 'HOME')
+                away_team = result.get('away_team', 'AWAY')
+                
+                print(f"\n🏠 {home_team}:")
+                print(f"   Performance Score: {home_perf.get('performance_score', 0):+.3f}")
+                print(f"   Trend: {home_perf.get('trend', 'unknown').upper()}")
+                print(f"   Key Injuries: {home_perf.get('key_injuries', 0)}")
+                print(f"   Players Analyzed: {home_perf.get('players_analyzed', 0)}")
+                
+                print(f"\n✈️  {away_team}:")
+                print(f"   Performance Score: {away_perf.get('performance_score', 0):+.3f}")
+                print(f"   Trend: {away_perf.get('trend', 'unknown').upper()}")
+                print(f"   Key Injuries: {away_perf.get('key_injuries', 0)}")
+                print(f"   Players Analyzed: {away_perf.get('players_analyzed', 0)}")
+                
+                summary = perf_analysis.get('summary', '')
+                if summary and summary != 'Teams have similar recent form':
+                    print(f"\n💡 {summary}")
+                print()
+            
             if result['meets_criteria']:
                 print("✅ HIGH CONFIDENCE PICK")
                 print("   Meets selective 75% strategy criteria")
@@ -469,6 +543,21 @@ def parlay_command(args):
     
     # Join query parts
     query = ' '.join(args.query)
+    query_lower = query.lower()
+    
+    # Check if this is a "winners parlay" query
+    if 'winners' in query_lower and ('week' in query_lower or 'parlay' in query_lower):
+        # Extract week number
+        import re
+        week_match = re.search(r'week\s*(\d+)', query_lower)
+        if week_match:
+            week = int(week_match.group(1))
+            winners_command(week, args.model_dir)
+            return
+        else:
+            print("\n❌ Could not find week number in query")
+            print("💡 Try: 'Week 15 winners parlay'")
+            return
     
     print("\n" + "="*60)
     print("🎰 PARLAY BUILDER")
@@ -512,6 +601,67 @@ def parlay_command(args):
         print(builder.display_options(options, max_display=15))
     else:
         print(f"\n❌ Error building parlay: {parlay.get('error', 'Unknown error')}")
+    
+    print("\n" + "="*60)
+
+
+def winners_command(week: int, model_dir: str = 'models/trained'):
+    """Display all projected winners for a given week.
+    
+    Args:
+        week: Week number
+        model_dir: Directory with trained models
+    """
+    from src.pipeline.parlay_builder import ParlayBuilder
+    
+    print("\n" + "="*60)
+    print(f"🏆 WEEK {week} PROJECTED WINNERS")
+    print("="*60)
+    
+    builder = ParlayBuilder(model_dir)
+    winners = builder.get_week_winners(week)
+    
+    if not winners:
+        print(f"\n❌ No games found for Week {week}")
+        return
+    
+    print(f"\n📊 Found {len(winners)} games for Week {week}\n")
+    
+    # Display winners sorted by confidence
+    print(f"{'Game':<35} {'Winner':<25} {'Confidence':<12} {'Spread':<10}")
+    print("-" * 85)
+    
+    for winner_info in winners:
+        game = winner_info['game']
+        winner = winner_info['predicted_winner_full']
+        confidence = winner_info['confidence']
+        spread = winner_info['spread']
+        
+        # Format spread
+        if spread > 0:
+            spread_str = f"+{spread:.1f}"
+        elif spread < 0:
+            spread_str = f"{spread:.1f}"
+        else:
+            spread_str = "PK"
+        
+        print(f"{game:<35} {winner:<25} {confidence:.0%}        {spread_str:<10}")
+    
+    # Summary statistics
+    high_confidence = [w for w in winners if w['confidence'] >= 0.70]
+    medium_confidence = [w for w in winners if 0.60 <= w['confidence'] < 0.70]
+    low_confidence = [w for w in winners if w['confidence'] < 0.60]
+    
+    print("\n" + "="*60)
+    print("📈 CONFIDENCE BREAKDOWN:")
+    print(f"   High Confidence (≥70%): {len(high_confidence)} games")
+    print(f"   Medium Confidence (60-70%): {len(medium_confidence)} games")
+    print(f"   Lower Confidence (<60%): {len(low_confidence)} games")
+    
+    if high_confidence:
+        print("\n🎯 HIGH CONFIDENCE PICKS:")
+        for w in high_confidence:
+            print(f"   ✓ {w['predicted_winner_full']} over {w['loser_full']} ({w['confidence']:.0%})")
     
     print("\n" + "="*60)
 
@@ -578,6 +728,13 @@ def main():
     parlay_parser.add_argument('query', nargs='+', help='Parlay query (e.g., "4 leg parlay Eagles vs Chargers" or "5 leg parlay week 14")')
     parlay_parser.add_argument('--model-dir', default='models/trained', help='Directory with trained models')
     
+    # Injuries command
+    injuries_parser = subparsers.add_parser('injuries', help='View and manage injured players list')
+    injuries_parser.add_argument('--list', action='store_true', help='List all injured players')
+    injuries_parser.add_argument('--add', nargs=2, metavar=('PLAYER', 'STATUS'), help='Add injured player (e.g., --add "Jahmyr Gibbs" OUT)')
+    injuries_parser.add_argument('--remove', metavar='PLAYER', help='Remove player from injured list (recovered)')
+    injuries_parser.add_argument('--check', metavar='PLAYER', help='Check if a player is injured')
+    
     # Parse arguments
     args = parser.parse_args()
     
@@ -598,6 +755,61 @@ def main():
         predict_command(args)
     elif args.command == 'parlay':
         parlay_command(args)
+    elif args.command == 'injuries':
+        injuries_command(args)
+
+
+def injuries_command(args):
+    """Handle the injuries command for managing injured players."""
+    from src.pipeline.parlay_builder import ParlayBuilder
+    
+    builder = ParlayBuilder()
+    
+    if args.list:
+        # List all injured players
+        injured = builder.get_injured_players()
+        if not injured:
+            print("No injured players in the list.")
+            return
+        
+        print("\n" + "=" * 60)
+        print("INJURED PLAYERS LIST")
+        print("=" * 60)
+        print(f"{'Player':<30} {'Status':<15} {'Excluded':<10}")
+        print("-" * 60)
+        
+        for player, status in sorted(injured.items()):
+            excluded = "Yes" if status.upper() in ['OUT', 'DOUBTFUL', 'IR'] else "No"
+            print(f"{player:<30} {status:<15} {excluded:<10}")
+        
+        print("\nNote: Players with OUT, DOUBTFUL, or IR status are excluded from parlays.")
+        print("QUESTIONABLE players are still included (may play).")
+        print("\nTo update: Edit src/pipeline/parlay_builder.py INJURED_PLAYERS dictionary")
+        print("Or use: python -m src.cli injuries --add 'Player Name' STATUS")
+        
+    elif args.add:
+        # Add injured player
+        player_name, status = args.add
+        builder.add_injured_player(player_name, status)
+        print(f"✓ Added {player_name} with status: {status}")
+        print("Note: This change is temporary. Edit the INJURED_PLAYERS dictionary in parlay_builder.py for permanent updates.")
+        
+    elif args.remove:
+        # Remove injured player
+        builder.remove_injured_player(args.remove)
+        print(f"✓ Removed {args.remove} from injured list")
+        print("Note: This change is temporary. Edit the INJURED_PLAYERS dictionary in parlay_builder.py for permanent updates.")
+        
+    elif args.check:
+        # Check if player is injured
+        is_injured = builder._is_player_injured(args.check)
+        status = builder.INJURED_PLAYERS.get(args.check, 'HEALTHY')
+        print(f"\n{args.check}:")
+        print(f"  Status: {status}")
+        print(f"  Excluded from parlays: {'Yes' if is_injured else 'No'}")
+    else:
+        # Default: show list
+        injuries_command(argparse.Namespace(command='injuries', list=True, add=None, remove=None, check=None))
 
 
 if __name__ == '__main__':

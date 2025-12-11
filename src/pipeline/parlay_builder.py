@@ -30,12 +30,53 @@ class BetOption:
 class ParlayBuilder:
     """Build parlays by generating and ranking betting options."""
     
+    # Known injured players (as of Week 14-15, 2025) - UPDATE WEEKLY
+    # Format: player name -> status ('OUT', 'DOUBTFUL', 'QUESTIONABLE', 'IR')
+    # Players with 'OUT', 'DOUBTFUL', or 'IR' will be excluded from parlay options
+    # QUESTIONABLE players are still included (they may play)
+    # 
+    # To update: Check NFL.com injury reports, ESPN injury tracker, or team injury reports
+    # Update this list before each week's games
+    INJURED_PLAYERS = {
+        # Season-ending injuries (IR) - Excluded from all parlays
+        'Zach Ertz': 'IR',  # Torn ACL, season over (Washington)
+        'Daniel Jones': 'IR',  # Achilles injury, season over (Indianapolis)
+        'Trey Hendrickson': 'IR',  # Core muscle surgery, out for season (Cincinnati)
+        'Kyu Blu Kelly': 'IR',  # Knee injury (Las Vegas)
+        'J.K. Dobbins': 'IR',  # Out for season (Denver)
+        
+        # Currently OUT - Excluded from parlays
+        'Nick Chubb': 'OUT',  # Rib injury, ruled out (Houston)
+        'Geno Smith': 'OUT',  # Shoulder injury (Las Vegas)
+        'Trent McDuffie': 'OUT',  # Knee injury (Kansas City)
+        'Wanya Morris': 'OUT',  # Knee injury (Kansas City)
+        
+        # QUESTIONABLE - Still included (may play)
+        # 'Cade Otton': 'QUESTIONABLE',  # Knee injury (Tampa Bay) - may play
+        # 'Drake London': 'QUESTIONABLE',  # Knee injury (Atlanta) - may play
+        
+        # IMPORTANT: Update this list weekly before building parlays
+        # Check these sources for current injury reports:
+        # - https://www.nfl.com/injuries/
+        # - https://www.espn.com/nfl/injuries
+        # - Team-specific injury reports (released Wed/Thu/Fri)
+        # - NFL.com transaction wire for IR placements
+    }
+    
+    # Minimum reasonable lines by position (to avoid unrealistic props)
+    MIN_LINES = {
+        'rushing_yards': 15,  # No RB should have under 15 yards unless confirmed out
+        'receiving_yards': 10,  # No WR/TE should have under 10 yards unless confirmed out
+        'passing_yards': 150,  # No QB should have under 150 yards unless confirmed out
+        'total_yards': 20,  # Combined rushing + receiving
+    }
+    
     # Key players per team (top skill position players) - 2025 SEASON ROSTERS
     TEAM_KEY_PLAYERS = {
         'PHI': ['A.J. Brown', 'Devonta Smith', 'Saquon Barkley', 'Jalen Hurts', 'Dallas Goedert'],
-        'LAC': ['Ladd McConkey', 'Quentin Johnston', 'Gus Edwards', 'Justin Herbert'],
+        'LAC': ['Ladd McConkey', 'Quentin Johnston', 'Gus Edwards', 'Justin Herbert', 'Omarion Hampton'],
         'KC': ['Travis Kelce', 'Xavier Worthy', 'Isiah Pacheco', 'Patrick Mahomes', 'DeAndre Hopkins'],
-        'BUF': ['Amari Cooper', 'Keon Coleman', 'James Cook', 'Dalton Kincaid', 'Josh Allen'],
+        'BUF': ['Keon Coleman', 'James Cook', 'Dalton Kincaid', 'Josh Allen', 'Khalil Shakir'],
         'SF': ['Deebo Samuel', 'George Kittle', 'Christian McCaffrey', 'Brock Purdy'],
         'DAL': ['CeeDee Lamb', 'Rico Dowdle', 'Jake Ferguson', 'Cooper Rush'],
         'MIA': ['Tyreek Hill', 'Jaylen Waddle', 'De\'Von Achane', 'Tua Tagovailoa'],
@@ -45,25 +86,25 @@ class ParlayBuilder:
         'MIN': ['Justin Jefferson', 'Jordan Addison', 'Aaron Jones', 'Sam Darnold'],
         'GB': ['Jayden Reed', 'Romeo Doubs', 'Josh Jacobs', 'Jordan Love'],
         'NYJ': ['Garrett Wilson', 'Davante Adams', 'Breece Hall', 'Aaron Rodgers'],
-        'DEN': ['Courtland Sutton', 'J.K. Dobbins', 'Bo Nix', 'Marvin Mims Jr'],
+        'DEN': ['Courtland Sutton', 'Bo Nix', 'Marvin Mims Jr', 'Javonte Williams', 'R.J. Harvey'],
         'HOU': ['Nico Collins', 'Tank Dell', 'Stefon Diggs', 'Joe Mixon', 'C.J. Stroud'],
-        'CLE': ['Jerry Jeudy', 'David Njoku', 'Nick Chubb', 'Jameis Winston'],
+        'CLE': ['Amari Cooper', 'Jerry Jeudy', 'David Njoku', 'Deshaun Watson', 'Jerome Ford'],
         'PIT': ['George Pickens', 'Najee Harris', 'Pat Freiermuth', 'Russell Wilson'],
-        'SEA': ['DK Metcalf', 'Jaxon Smith-Njigba', 'Kenneth Walker', 'Geno Smith'],
-        'TB': ['Mike Evans', 'Chris Godwin', 'Bucky Irving', 'Baker Mayfield'],
+        'SEA': ['DK Metcalf', 'Jaxon Smith-Njigba', 'Kenneth Walker', 'Cooper Kupp', 'Sam Howell'],
+        'TB': ['Mike Evans', 'Chris Godwin', 'Bucky Irving', 'Baker Mayfield', 'Emeka Egbuka'],
         'NO': ['Chris Olave', 'Alvin Kamara', 'Derek Carr'],
         'ATL': ['Drake London', 'Bijan Robinson', 'Kyle Pitts', 'Kirk Cousins', 'Darnell Mooney'],
-        'CAR': ['Adam Thielen', 'Chuba Hubbard', 'Bryce Young', 'Xavier Legette'],
+        'CAR': ['Adam Thielen', 'Chuba Hubbard', 'Bryce Young', 'Xavier Legette', 'Tetairoa McMillan'],
         'LV': ['Jakobi Meyers', 'Brock Bowers', 'Alexander Mattison', 'Aidan O\'Connell'],
         'ARI': ['Marvin Harrison Jr', 'Trey McBride', 'James Conner', 'Kyler Murray'],
-        'LAR': ['Puka Nacua', 'Cooper Kupp', 'Kyren Williams', 'Matthew Stafford'],
-        'NYG': ['Malik Nabers', 'Wan\'Dale Robinson', 'Tyrone Tracy Jr', 'Tommy DeVito'],
+        'LAR': ['Puka Nacua', 'Kyren Williams', 'Matthew Stafford', 'Terrance Ferguson'],
+        'NYG': ['Malik Nabers', 'Wan\'Dale Robinson', 'Tyrone Tracy Jr', 'Jaxson Dart'],
         'CHI': ['D.J. Moore', 'Rome Odunze', 'D\'Andre Swift', 'Caleb Williams'],
-        'WAS': ['Terry McLaurin', 'Brian Robinson Jr', 'Zach Ertz', 'Jayden Daniels'],
-        'JAX': ['Brian Thomas Jr', 'Travis Etienne', 'Evan Engram', 'Mac Jones'],
+        'WAS': ['Terry McLaurin', 'Brian Robinson Jr', 'Jayden Daniels', 'Jahan Dotson'],
+        'JAX': ['Brian Thomas Jr', 'Travis Etienne', 'Evan Engram', 'Mac Jones', 'Travis Hunter'],
         'TEN': ['Calvin Ridley', 'Tony Pollard', 'Will Levis', 'Chig Okonkwo'],
         'IND': ['Michael Pittman Jr', 'Jonathan Taylor', 'Anthony Richardson'],
-        'NE': ['Rhamondre Stevenson', 'Hunter Henry', 'Drake Maye'],
+        'NE': ['Rhamondre Stevenson', 'Hunter Henry', 'Drake Maye', 'TreVeyon Henderson'],
     }
     
     # Team name mapping
@@ -126,6 +167,7 @@ class ParlayBuilder:
         self.schedule = None
         self.player_prop_predictor = None
         self.quick_predictor = None
+        self.market_line_estimator = None
         
     def _get_player_prop_predictor(self):
         """Lazy load player prop predictor."""
@@ -133,6 +175,13 @@ class ParlayBuilder:
             from src.pipeline.quick_predict import PlayerPropPredictor
             self.player_prop_predictor = PlayerPropPredictor()
         return self.player_prop_predictor
+    
+    def _get_market_line_estimator(self):
+        """Lazy load market line estimator."""
+        if self.market_line_estimator is None:
+            from src.data.collectors.market_line_estimator import MarketLineEstimator
+            self.market_line_estimator = MarketLineEstimator()
+        return self.market_line_estimator
     
     def _get_quick_predictor(self):
         """Lazy load quick predictor."""
@@ -276,6 +325,73 @@ class ParlayBuilder:
             'total': game.get('total_line', 45) if pd.notna(game.get('total_line')) else 45,
         }
     
+    def get_week_winners(self, week: int, season: int = 2025) -> List[Dict[str, Any]]:
+        """Get all projected winners for a given week.
+        
+        Args:
+            week: Week number
+            season: Season year
+            
+        Returns:
+            List of winner predictions with confidence
+        """
+        games = self.get_week_games(week)
+        if not games:
+            return []
+        
+        # Get quick predictor for game predictions
+        qp = self._get_quick_predictor()
+        if not qp.load_models():
+            logger.warning("Models not loaded, using basic predictions")
+        
+        winners = []
+        
+        for game in games:
+            home = game['home_team']
+            away = game['away_team']
+            game_str = f"{away} @ {home}"
+            
+            # Make prediction for this game
+            try:
+                # Create query string for the game
+                home_full = self.TEAM_FULL_NAMES.get(home, home)
+                away_full = self.TEAM_FULL_NAMES.get(away, away)
+                query = f"{away_full} vs {home_full}"
+                
+                result = qp.predict(query)
+                
+                if result.get('success') and not result.get('completed'):
+                    predicted_winner = result.get('prediction')
+                    confidence = result.get('confidence', 0.5)
+                    spread = result.get('spread', 0)
+                    
+                    winner_full = self.TEAM_FULL_NAMES.get(predicted_winner, predicted_winner)
+                    loser = away if predicted_winner == home else home
+                    loser_full = self.TEAM_FULL_NAMES.get(loser, loser)
+                    
+                    winners.append({
+                        'game': game_str,
+                        'home_team': home,
+                        'away_team': away,
+                        'home_team_full': home_full,
+                        'away_team_full': away_full,
+                        'predicted_winner': predicted_winner,
+                        'predicted_winner_full': winner_full,
+                        'loser': loser,
+                        'loser_full': loser_full,
+                        'confidence': confidence,
+                        'spread': spread,
+                        'gameday': game.get('gameday', 'TBD'),
+                    })
+            except Exception as e:
+                logger.debug(f"Error predicting {game_str}: {e}")
+                continue
+        
+        # Sort by confidence (highest first)
+        winners.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        return winners
+    
     def get_week_games(self, week: int) -> List[Dict[str, Any]]:
         """Get all games for a given week.
         
@@ -292,10 +408,19 @@ class ParlayBuilder:
         week_games = schedule[schedule['week'] == week]
         games = []
         
+        def normalize_team_abbr(abbr: str) -> str:
+            """Convert schedule abbreviations to our standard format."""
+            if abbr == 'LA':  # Schedule uses 'LA' for Rams
+                return 'LAR'
+            return abbr
+        
         for _, game in week_games.iterrows():
+            home_team = normalize_team_abbr(game['home_team'])
+            away_team = normalize_team_abbr(game['away_team'])
+            
             games.append({
-                'home_team': game['home_team'],
-                'away_team': game['away_team'],
+                'home_team': home_team,
+                'away_team': away_team,
                 'week': int(game['week']),
                 'gameday': game.get('gameday', 'TBD'),
                 'spread': game.get('spread_line', 0) if pd.notna(game.get('spread_line')) else 0,
@@ -456,6 +581,109 @@ class ParlayBuilder:
         
         return options
     
+    def _is_player_injured(self, player_name: str) -> bool:
+        """Check if a player is injured and should be excluded.
+        
+        Args:
+            player_name: Player name
+            
+        Returns:
+            True if player is injured (OUT, DOUBTFUL, IR), False otherwise
+        """
+        # Check exact match first
+        injury_status = self.INJURED_PLAYERS.get(player_name, '').upper()
+        if injury_status in ['OUT', 'DOUBTFUL', 'IR']:
+            return True
+        
+        # Check case-insensitive match
+        player_lower = player_name.lower()
+        for injured_player, status in self.INJURED_PLAYERS.items():
+            if injured_player.lower() == player_lower:
+                if status.upper() in ['OUT', 'DOUBTFUL', 'IR']:
+                    return True
+        
+        return False
+    
+    @classmethod
+    def add_injured_player(cls, player_name: str, status: str) -> None:
+        """Add or update an injured player.
+        
+        Args:
+            player_name: Player name (exact match required)
+            status: Injury status ('OUT', 'DOUBTFUL', 'QUESTIONABLE', 'IR')
+        """
+        cls.INJURED_PLAYERS[player_name] = status.upper()
+        logger.info(f"Added injured player: {player_name} - {status}")
+    
+    @classmethod
+    def remove_injured_player(cls, player_name: str) -> None:
+        """Remove a player from the injured list (they've recovered).
+        
+        Args:
+            player_name: Player name to remove
+        """
+        if player_name in cls.INJURED_PLAYERS:
+            del cls.INJURED_PLAYERS[player_name]
+            logger.info(f"Removed injured player: {player_name} (recovered)")
+    
+    @classmethod
+    def get_injured_players(cls) -> Dict[str, str]:
+        """Get current list of injured players.
+        
+        Returns:
+            Dictionary of player name -> injury status
+        """
+        return cls.INJURED_PLAYERS.copy()
+    
+    def _validate_player_stats(self, result: Dict[str, Any], stat_type: str) -> bool:
+        """Validate that player stats are reasonable.
+        
+        Args:
+            result: Prediction result from player prop predictor
+            stat_type: Type of stat
+            
+        Returns:
+            True if stats are valid, False otherwise
+        """
+        if not result.get('success'):
+            return False
+        
+        # Check if player has recent games
+        games_analyzed = result.get('games_analyzed', 0)
+        if games_analyzed < 3:
+            logger.debug(f"Player has too few games: {games_analyzed}")
+            return False
+        
+        # Check average yards is reasonable and positive
+        avg_yards = result.get('avg_yards', 0)
+        median_yards = result.get('median_yards', avg_yards)
+        
+        # Use median if available, otherwise average
+        base_yards = median_yards if median_yards and median_yards > 0 else avg_yards
+        
+        # CRITICAL: Must be positive
+        if base_yards <= 0:
+            logger.debug(f"Player has non-positive yards: {base_yards}")
+            return False
+        
+        min_line = self.MIN_LINES.get(stat_type, 10)
+        
+        # If average/median is below minimum, only allow if it's an UNDER bet with very high confidence
+        if base_yards < min_line:
+            prediction = result.get('prediction', '')
+            confidence = result.get('confidence', 0)
+            # Only allow if it's UNDER with very high confidence (player confirmed out/inactive)
+            if prediction == 'UNDER' and confidence >= 0.9:
+                # Still ensure it's at least 5 yards (absolute minimum)
+                if base_yards < 5:
+                    logger.debug(f"Player yards {base_yards} too low even for high-confidence UNDER")
+                    return False
+                return True
+            logger.debug(f"Player average {base_yards} below minimum {min_line} for {stat_type}")
+            return False
+        
+        return True
+    
     def generate_player_yards_options(self, game: Dict[str, Any], num_players: int = 3) -> List[BetOption]:
         """Generate player yards prop options.
         
@@ -478,6 +706,11 @@ class ParlayBuilder:
             
             for player in players:
                 try:
+                    # Skip injured players
+                    if self._is_player_injured(player):
+                        logger.debug(f"Skipping injured player: {player}")
+                        continue
+                    
                     # Determine stat type based on player position (2025 rosters)
                     # Use full names where there's ambiguity to avoid false matches
                     # QBs - passing yards (use full names to avoid matching WRs like Devonta Smith)
@@ -501,22 +734,69 @@ class ParlayBuilder:
                     
                     if any(qb == player for qb in qb_full_names):
                         stat_type = 'passing_yards'
-                        default_line = 250
                     elif any(rb == player for rb in rb_full_names):
                         stat_type = 'rushing_yards'
-                        default_line = 60
                     else:
                         stat_type = 'receiving_yards'
-                        default_line = 55
                     
-                    # Get player stats
-                    result = pp.predict_over_under(player, default_line, stat_type)
+                    # Determine opponent team
+                    opponent = away if team == home else home
+                    
+                    # Get market-consistent line estimate
+                    estimator = self._get_market_line_estimator()
+                    try:
+                        # Get player stats first for better line estimation
+                        player_stats = pp.get_player_history(player, stat_type)
+                        estimated_line = estimator.estimate_player_line(
+                            player_name=player,
+                            stat_type=stat_type,
+                            opponent_team=opponent,
+                            season=2025,
+                            player_stats=player_stats if player_stats.get('found') else None
+                        )
+                    except Exception as e:
+                        logger.debug(f"Error estimating line for {player}: {e}")
+                        continue
+                    
+                    # Validate estimated line is reasonable
+                    min_line = self.MIN_LINES.get(stat_type, 10)
+                    if estimated_line <= 0 or estimated_line < min_line:
+                        logger.debug(f"Invalid estimated line ({estimated_line}) for {player}, skipping")
+                        continue
+                    
+                    # Get model prediction using the estimated line
+                    result = pp.predict_over_under(player, estimated_line, stat_type)
+                    
+                    # Validate stats are reasonable
+                    if not self._validate_player_stats(result, stat_type):
+                        logger.debug(f"Invalid stats for {player}, skipping")
+                        continue
                     
                     if result.get('success'):
-                        avg = result.get('avg_yards', default_line)
-                        line = round(avg * 0.9 / 5) * 5  # Set line slightly below average
-                        confidence = result.get('confidence', 0.5)
                         prediction = result.get('prediction', 'OVER')
+                        confidence = result.get('confidence', 0.5)
+                        
+                        # Only generate options with reasonable confidence
+                        if confidence < 0.45:
+                            logger.debug(f"Low confidence ({confidence:.0%}) for {player}, skipping")
+                            continue
+                        
+                        # Use the estimated market line
+                        line = estimated_line
+                        
+                        # Final validation: ensure line is positive and reasonable
+                        if line <= 0:
+                            logger.debug(f"Invalid line ({line}) for {player}, skipping")
+                            continue
+                        
+                        if line < min_line:
+                            # Only allow very low UNDER lines if confidence is very high (player confirmed out)
+                            if prediction == 'UNDER' and confidence >= 0.9:
+                                # Allow it, but ensure it's at least 5 yards
+                                line = max(5, line)
+                            else:
+                                logger.debug(f"Line {line} below minimum {min_line} for {stat_type}, skipping")
+                                continue
                         
                         stat_label = stat_type.replace('_', ' ').replace('yards', 'yds')
                         
@@ -566,6 +846,11 @@ class ParlayBuilder:
             players = self.TEAM_KEY_PLAYERS.get(team, [])[:num_players]
             
             for player in players:
+                # Skip injured players
+                if self._is_player_injured(player):
+                    logger.debug(f"Skipping injured player for TD: {player}")
+                    continue
+                
                 # Skip pocket QBs for anytime TD (they rarely score rushing/receiving TDs)
                 # Note: Mobile QBs like Hurts, Jackson, Daniels are NOT skipped
                 qb_skip = ['Patrick Mahomes', 'Josh Allen', 'Justin Herbert', 'Joe Burrow', 
@@ -585,8 +870,16 @@ class ParlayBuilder:
                         td_rate = result.get('td_rate', 0)
                         confidence = result.get('confidence', 0.5)
                         prediction = result.get('prediction', 'NO')
+                        games_analyzed = result.get('games_analyzed', 0)
                         
-                        if prediction == 'YES' and td_rate >= 0.3:  # Only include if decent chance
+                        # Validate: need at least 3 games of data
+                        if games_analyzed < 3:
+                            logger.debug(f"Insufficient games ({games_analyzed}) for {player} TD prop")
+                            continue
+                        
+                        # Only include YES predictions (anytime TD bets)
+                        # Sportsbooks don't offer "No TD" as a betting option
+                        if prediction == 'YES' and td_rate >= 0.3 and confidence >= 0.45:
                             options.append(BetOption(
                                 bet_type='player_td',
                                 description=f"{player} Anytime TD",

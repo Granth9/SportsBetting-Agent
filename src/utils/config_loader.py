@@ -77,6 +77,15 @@ class ConfigLoader:
         return key
     
     @property
+    def api_sports_key(self) -> str:
+        """Get API-SPORTS API key from environment (optional).
+        
+        Returns:
+            API key or empty string if not set
+        """
+        return self.get_env('API_SPORTS_KEY', '')
+    
+    @property
     def config(self) -> Dict[str, Any]:
         """Get the full configuration dictionary."""
         return self._config
