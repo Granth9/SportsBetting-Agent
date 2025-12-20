@@ -63,6 +63,17 @@ models:
     confidence_threshold: 0.70  # Minimum confidence required
     min_spread: 5.0  # Only bet on games with spread >= 5 points
     weights: {}  # Empty dict means equal weights
+    enabled: true  # Enable voting ensemble
+  
+  stacking:
+    enabled: true  # Enable stacking meta-learner
+    meta_learner_type: "logistic"  # 'logistic' or 'lightgbm'
+    n_folds: 5  # Number of folds for out-of-fold predictions
+  
+  catboost:
+    n_estimators: 200
+    max_depth: 7
+    learning_rate: 0.05
 
 # Debate Configuration
 debate:

@@ -108,16 +108,18 @@ class PlayerPropPredictor:
         name_patterns = [
             # "R.J. Harvey" with periods (initials) - match first
             r"([A-Z]\.?\s*[A-Z]\.?\s+[A-Z][a-zA-Z]+)",
-            # "Ja'Marr Chase" with apostrophe
+            # "De'Von Achane" or "Ja'Marr Chase" with apostrophe in first name
+            r"([A-Z][a-zA-Z]*['\'][A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+)",
+            # "Ja'Marr Chase" with apostrophe (more flexible)
             r"([A-Za-z]+['\'][A-Za-z]+\s+[A-Za-z]+)",
             # Names like "Ladd McConkey" with mixed case (Mc, Mac, O', etc.)
             r"([A-Z][a-z]+\s+(?:Mc|Mac|O\')?[A-Z][a-zA-Z]+)",
             # "will Devonta Smith get" -> "Devonta Smith"  
-            r"(?:will|can|does)\s+([A-Z][a-z]+\s+[A-Za-z]+)\s+(?:get|have|hit)",
+            r"(?:will|can|does)\s+([A-Z][a-z]+(?:\'[A-Z][a-z]+)?\s+[A-Z][a-zA-Z]+)\s+(?:get|have|hit)",
             # "Devonta Smith 40 yards" -> "Devonta Smith"
-            r"([A-Z][a-z]+\s+[A-Za-z]+)\s+\d+",
+            r"([A-Z][a-z]+(?:\'[A-Z][a-z]+)?\s+[A-Z][a-zA-Z]+)\s+\d+",
             # Two capitalized words (name pattern) - allow mixed case in last name
-            r"([A-Z][a-z]+\s+[A-Z][a-zA-Z]+)",
+            r"([A-Z][a-z]+(?:\'[A-Z][a-z]+)?\s+[A-Z][a-zA-Z]+)",
         ]
         
         for pattern in name_patterns:
@@ -145,13 +147,27 @@ class PlayerPropPredictor:
         ]
         
         for player in known_players:
-            # Check if any part of the player name is in the query
-            player_parts = player.lower().replace("'", "").split()
-            if any(part in query_lower.replace("'", "") for part in player_parts if len(part) > 3):
-                # Verify with at least another part
-                matches = sum(1 for part in player_parts if part in query_lower.replace("'", ""))
-                if matches >= 1:
-                    return player
+            # Check if player name (with or without apostrophe) is in query
+            player_normalized = player.lower().replace("'", "").replace("-", " ")
+            query_normalized = query_lower.replace("'", "").replace("-", " ")
+            
+            # Check if full name matches (all parts)
+            player_parts = player_normalized.split()
+            if len(player_parts) >= 2:
+                # Check if all significant parts (len > 3) are in query
+                significant_parts = [p for p in player_parts if len(p) > 3]
+                if significant_parts:
+                    matches = sum(1 for part in significant_parts if part in query_normalized)
+                    if matches >= len(significant_parts):
+                        return player
+                # Also check if last name is in query (for cases like "Achane")
+                if len(player_parts) >= 2:
+                    last_name = player_parts[-1]
+                    if len(last_name) > 3 and last_name in query_normalized:
+                        # Verify with first name or part of first name
+                        first_name = player_parts[0]
+                        if first_name[:3] in query_normalized or first_name in query_normalized:
+                            return player
         
         # Fallback: Load stats and search for matches
         if self.player_stats is None or len(self.player_stats) == 0:
@@ -1545,11 +1561,33 @@ class QuickPredictor:
         
         home_team = normalize_team_abbr(game['home_team'])
         away_team = normalize_team_abbr(game['away_team'])
+        week = int(game['week'])
         
+        # Check for manual betting lines override (for accurate current lines)
+        from src.pipeline.parlay_builder import ParlayBuilder
+        override_key = (week, away_team, home_team)
+        if override_key in ParlayBuilder.BETTING_LINES_OVERRIDE:
+            override = ParlayBuilder.BETTING_LINES_OVERRIDE[override_key]
+            logger.debug(f"Using manual betting lines override for {away_team} @ {home_team} Week {week}")
+            return {
+                'home_team': home_team,
+                'away_team': away_team,
+                'week': week,
+                'gameday': game['gameday'],
+                'spread': override.get('spread', 0),  # From home team perspective: negative = home favorite
+                'total': override.get('total', 45),
+                'home_ml': override.get('home_ml', -110),
+                'away_ml': override.get('away_ml', -110),
+                'completed': pd.notna(game.get('home_score')),
+                'home_score': game.get('home_score'),
+                'away_score': game.get('away_score'),
+            }
+        
+        # Use data from nfl_data_py (may be outdated)
         return {
             'home_team': home_team,
             'away_team': away_team,
-            'week': int(game['week']),
+            'week': week,
             'gameday': game['gameday'],
             'spread': game.get('spread_line', 0) if pd.notna(game.get('spread_line')) else 0,
             'total': game.get('total_line', 45) if pd.notna(game.get('total_line')) else 45,

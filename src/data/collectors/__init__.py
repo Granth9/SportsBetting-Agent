@@ -6,6 +6,7 @@ from src.data.collectors.market_line_estimator import MarketLineEstimator
 from src.data.collectors.player_stats_base import PlayerStatsCollector
 from src.data.collectors.api_sports_stats import APISportsStats
 from src.data.collectors.multi_source_stats import MultiSourceStatsCollector
+from src.data.collectors.injury_collector import InjuryCollector
 
 __all__ = [
     'NFLDataCollector',
@@ -14,4 +15,5 @@ __all__ = [
     'PlayerStatsCollector',
     'APISportsStats',
     'MultiSourceStatsCollector',
+    'InjuryCollector',
 ]

@@ -249,4 +249,65 @@ class DataSplitter:
         logger.info(f"Split by season: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
         
         return train_df, val_df, test_df
+    
+    @staticmethod
+    def time_series_cv(
+        df: pd.DataFrame,
+        date_col: str,
+        n_splits: int = 5,
+        test_size: Optional[int] = None,
+        gap: int = 0
+    ) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
+        """Time-series cross-validation with walk-forward splits.
+        
+        Respects temporal order - training data always comes before validation data.
+        This prevents data leakage and provides more realistic evaluation.
+        
+        Args:
+            df: DataFrame to split (must be sorted by date)
+            date_col: Name of date column
+            n_splits: Number of CV splits
+            test_size: Size of test set for each split (default: len(df) / (n_splits + 1))
+            gap: Gap between train and test sets (default: 0)
+            
+        Returns:
+            List of (train_df, test_df) tuples for each fold
+        """
+        # Sort by date to ensure temporal order
+        df_sorted = df.sort_values(date_col).reset_index(drop=True)
+        n = len(df_sorted)
+        
+        if test_size is None:
+            test_size = max(1, n // (n_splits + 1))
+        
+        folds = []
+        for i in range(n_splits):
+            # Calculate split points
+            test_start = n - (n_splits - i) * test_size
+            test_end = test_start + test_size
+            
+            # Ensure valid ranges
+            if test_start < 0:
+                test_start = 0
+            if test_end > n:
+                test_end = n
+            
+            if test_start >= test_end:
+                continue
+            
+            # Training data: everything before test_start (with optional gap)
+            train_end = test_start - gap
+            if train_end <= 0:
+                continue
+            
+            train_df = df_sorted.iloc[:train_end]
+            test_df = df_sorted.iloc[test_start:test_end]
+            
+            if len(train_df) > 0 and len(test_df) > 0:
+                folds.append((train_df, test_df))
+                logger.debug(f"Fold {i+1}: Train={len(train_df)} ({df_sorted[date_col].iloc[0]} to {df_sorted[date_col].iloc[train_end-1]}), "
+                           f"Test={len(test_df)} ({df_sorted[date_col].iloc[test_start]} to {df_sorted[date_col].iloc[test_end-1]})")
+        
+        logger.info(f"Created {len(folds)} time-series CV folds")
+        return folds
 

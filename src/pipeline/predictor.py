@@ -11,16 +11,26 @@ from src.models.traditional.random_forest_model import RandomForestModel
 from src.models.traditional.statistical_model import StatisticalModel
 from src.models.traditional.lightgbm_model import LightGBMModel
 from src.models.traditional.svm_model import SVMModel
+
+# CatBoost is optional
+try:
+    from src.models.traditional.catboost_model import CatBoostModel
+    CATBOOST_AVAILABLE = True
+except ImportError:
+    CATBOOST_AVAILABLE = False
 from src.models.ensemble.ensemble_model import EnsembleModel
+from src.models.ensemble.stacking_model import StackingModel
 from src.agents.moderator import DebateModerator
 from src.data.collectors.nfl_data_collector import NFLDataCollector
 from src.data.processors.feature_engineer import FeatureEngineer
+from src.data.processors.data_preprocessor import DataPreprocessor
 from src.utils.data_types import (
     Proposition,
     ModelPrediction,
     DebateResult,
     Recommendation,
-    BetType
+    BetType,
+    Outcome
 )
 from src.utils.logger import setup_logger
 from src.utils.config_loader import get_config
@@ -57,11 +67,18 @@ class BettingCouncil:
         # Initialize data components
         self.data_collector = NFLDataCollector()
         self.feature_engineer = FeatureEngineer()
+        self.preprocessor: Optional[DataPreprocessor] = None  # Preprocessor for feature transformation
         
         # Track model performance
         self.model_accuracies: Dict[str, float] = {
             model.name: model.get_recent_accuracy() for model in self.models
         }
+        
+        # Enable dynamic weighting for ensemble models
+        for model in self.models:
+            if isinstance(model, EnsembleModel):
+                model.enable_dynamic_weights()
+                logger.info(f"Enabled dynamic weighting for {model.name}")
         
         logger.info(f"Betting Council initialized with {len(self.models)} models")
     
@@ -113,16 +130,44 @@ class BettingCouncil:
             )
         ]
         
-        # Optionally add ensemble model
+        # Optionally add CatBoost if available
+        if CATBOOST_AVAILABLE:
+            try:
+                catboost_config = self.config.get('models.catboost', {})
+                models.append(CatBoostModel(
+                    name="CatBoost Optimizer",
+                    n_estimators=catboost_config.get('n_estimators', 200),
+                    max_depth=catboost_config.get('max_depth', 7),
+                    learning_rate=catboost_config.get('learning_rate', 0.05)
+                ))
+                logger.info("Added CatBoost model to ensemble")
+            except Exception as e:
+                logger.warning(f"Could not add CatBoost model: {e}")
+        
+        # Optionally add ensemble models
         ensemble_config = self.config.get('models.ensemble', {})
+        
+        # Add voting ensemble if enabled
         if ensemble_config.get('enabled', False):
             ensemble = EnsembleModel(
                 name="Ensemble Council",
-                base_models=models,
+                base_models=models.copy(),
                 voting_strategy=ensemble_config.get('voting_strategy', 'weighted'),
                 weights=ensemble_config.get('weights', {})
             )
             models.append(ensemble)
+        
+        # Add stacking meta-learner if enabled
+        stacking_config = self.config.get('models.stacking', {})
+        if stacking_config.get('enabled', False):
+            stacking = StackingModel(
+                name="Stacking Meta-Learner",
+                base_models=models.copy(),
+                meta_learner_type=stacking_config.get('meta_learner_type', 'logistic'),
+                n_folds=stacking_config.get('n_folds', 5)
+            )
+            models.append(stacking)
+            logger.info("Added Stacking Meta-Learner to ensemble")
         
         return models
     
@@ -208,6 +253,10 @@ class BettingCouncil:
         Returns:
             List of model predictions
         """
+        # Validate features against preprocessor if available
+        if self.preprocessor is not None:
+            self._validate_features(features)
+        
         predictions = []
         
         for model in self.models:
@@ -224,6 +273,28 @@ class BettingCouncil:
                 logger.error(f"Error running {model.name}: {e}")
         
         return predictions
+    
+    def _validate_features(self, features: Dict[str, Any]) -> None:
+        """Validate that features match preprocessor expectations.
+        
+        Args:
+            features: Feature dictionary to validate
+        """
+        if self.preprocessor is None:
+            return
+        
+        preprocessor_features = set(self.preprocessor.get_feature_names())
+        provided_features = set(features.keys())
+        
+        # Check for missing features
+        missing_features = preprocessor_features - provided_features
+        if missing_features:
+            logger.warning(f"Missing {len(missing_features)} features expected by preprocessor: {list(missing_features)[:10]}")
+        
+        # Check for unexpected features (less critical, but good to know)
+        unexpected_features = provided_features - preprocessor_features
+        if unexpected_features:
+            logger.debug(f"Found {len(unexpected_features)} features not in preprocessor (will be ignored): {list(unexpected_features)[:10]}")
     
     def _generate_recommendation(
         self,
@@ -325,18 +396,44 @@ class BettingCouncil:
         Args:
             model_dir: Directory containing saved models
         """
+        import joblib
         model_dir_path = Path(model_dir)
         
+        # Try to load preprocessor first
+        preprocessor_path = model_dir_path / 'preprocessor.pkl'
+        if preprocessor_path.exists():
+            try:
+                self.preprocessor = joblib.load(str(preprocessor_path))
+                logger.info(f"Loaded preprocessor from {preprocessor_path}")
+                logger.info(f"Preprocessor has {len(self.preprocessor.get_feature_names())} features")
+            except Exception as e:
+                logger.warning(f"Could not load preprocessor: {e}")
+        else:
+            logger.warning(f"Preprocessor not found at {preprocessor_path}. Models may not have correct feature scaling.")
+        
+        # Load models
         for model in self.models:
             model_file = model_dir_path / f"{model.name.lower().replace(' ', '_')}.pkl"
             if model_file.exists():
                 try:
                     model.load(str(model_file))
                     logger.info(f"Loaded {model.name} from {model_file}")
+                    
+                    # Set preprocessor on model if available
+                    if self.preprocessor is not None:
+                        model.set_preprocessor(self.preprocessor)
+                        logger.debug(f"Set preprocessor on {model.name}")
                 except Exception as e:
                     logger.error(f"Error loading {model.name}: {e}")
             else:
                 logger.warning(f"Model file not found: {model_file}")
+        
+        # Ensure all models have the same preprocessor
+        if self.preprocessor is not None:
+            for model in self.models:
+                if model.preprocessor is None:
+                    model.set_preprocessor(self.preprocessor)
+                    logger.info(f"Set shared preprocessor on {model.name}")
     
     def save_models(self, model_dir: str) -> None:
         """Save all models to disk.
@@ -344,9 +441,22 @@ class BettingCouncil:
         Args:
             model_dir: Directory to save models
         """
+        import joblib
         model_dir_path = Path(model_dir)
         model_dir_path.mkdir(parents=True, exist_ok=True)
         
+        # Save preprocessor if available
+        if self.preprocessor is not None:
+            preprocessor_path = model_dir_path / 'preprocessor.pkl'
+            try:
+                joblib.dump(self.preprocessor, str(preprocessor_path))
+                logger.info(f"Saved preprocessor to {preprocessor_path}")
+            except Exception as e:
+                logger.error(f"Error saving preprocessor: {e}")
+        else:
+            logger.warning("No preprocessor to save. Models may not load correctly.")
+        
+        # Save models
         for model in self.models:
             model_file = model_dir_path / f"{model.name.lower().replace(' ', '_')}.pkl"
             try:

@@ -38,15 +38,19 @@ class RandomForestModel(BaseModel):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         
+        # Default to using all CPU cores for faster training
+        n_jobs = kwargs.pop('n_jobs', -1)
+        
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
             min_samples_split=min_samples_split,
             random_state=42,
+            n_jobs=n_jobs,  # Enable parallelization
             **kwargs
         )
     
-    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, **kwargs) -> None:
+    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, sample_weight: np.ndarray = None, **kwargs) -> None:
         """Train the random forest model.
         
         Args:
@@ -54,11 +58,14 @@ class RandomForestModel(BaseModel):
             y: Training targets
             X_val: Validation features (optional, not used by this model)
             y_val: Validation targets (optional, not used by this model)
+            sample_weight: Optional sample weights for training
             **kwargs: Additional training parameters
         """
         logger.info(f"Training {self.name} on {len(X)} samples")
+        if sample_weight is not None:
+            logger.info(f"Using temporal weighting (sample weights provided)")
         
-        self.model.fit(X, y)
+        self.model.fit(X, y, sample_weight=sample_weight)
         
         # Store feature names if available
         if hasattr(X, 'columns'):

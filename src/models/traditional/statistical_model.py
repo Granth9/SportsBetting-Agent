@@ -45,11 +45,20 @@ class StatisticalModel(BaseModel):
         Args:
             X: Training features
             y: Training targets
-            **kwargs: Additional training parameters
+            X_val: Validation features (optional, not used by this model)
+            y_val: Validation targets (optional, not used by this model)
+            **kwargs: Additional training parameters (may include class_weight)
         """
         logger.info(f"Training {self.name} on {len(X)} samples")
         
-        self.model.fit(X, y)
+        # Extract class_weight if provided
+        class_weight = kwargs.pop('class_weight', None)
+        if class_weight is not None:
+            logger.info(f"Using class weights: {class_weight}")
+            # Update model with class weights
+            self.model.set_params(class_weight=class_weight)
+        
+        self.model.fit(X, y, **kwargs)
         
         # Store feature names if available
         if hasattr(X, 'columns'):

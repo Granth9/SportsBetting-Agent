@@ -30,6 +30,112 @@ class BetOption:
 class ParlayBuilder:
     """Build parlays by generating and ranking betting options."""
     
+    # Manual betting lines override (Week 15, 2025) - UPDATE WEEKLY
+    # Format: (week, away_team, home_team) -> {'spread': float, 'home_ml': float, 'away_ml': float, 'total': float}
+    # Spread is from home team perspective: negative = home favorite, positive = away favorite
+    # Example: -4.5 means home team is favored by 4.5 points
+    BETTING_LINES_OVERRIDE = {
+        # Week 15, 2025 - Thursday, Dec 11
+        (15, 'ATL', 'TB'): {
+            'spread': -4.5,  # Bucs -4.5 (home favorite)
+            'home_ml': -240,  # Bucs -245 to -238 (using -240 as average)
+            'away_ml': 200,   # Falcons +200 to +195 (using +200 as average)
+            'total': 45.0,    # Estimate, update if you have the actual total
+        },
+        # Week 15, 2025 - Sunday, Dec 14
+        (15, 'NYJ', 'JAX'): {
+            'spread': -13.5,  # Jaguars -13.5
+            'home_ml': -900,  # Jaguars -900
+            'away_ml': 600,   # Jets +600
+            'total': 40.0,
+        },
+        (15, 'CLE', 'CHI'): {
+            'spread': -7.5,   # Bears -7.5
+            'home_ml': -425,  # Bears -425
+            'away_ml': 330,   # Browns +330
+            'total': 42.0,
+        },
+        (15, 'BUF', 'NE'): {
+            'spread': -1.5,   # Bills -1.5
+            'home_ml': -120,  # Bills -115 to -120 (using -120)
+            'away_ml': 100,   # Patriots +100 to -105/+100 (using +100)
+            'total': 42.0,
+        },
+        (15, 'BAL', 'CIN'): {
+            'spread': -2.5,   # Ravens -2.5
+            'home_ml': -135,  # Ravens -135
+            'away_ml': 114,   # Bengals +114
+            'total': 45.0,
+        },
+        (15, 'ARI', 'HOU'): {
+            'spread': -9.5,   # Texans -9.5
+            'home_ml': -550,  # Texans -525 to -575 (using -550)
+            'away_ml': 400,   # Cardinals +390 to +425 (using +400)
+            'total': 48.0,
+        },
+        (15, 'LV', 'PHI'): {
+            'spread': -11.5,  # Eagles -11.5
+            'home_ml': -750,  # Eagles -675 to -800 (using -750)
+            'away_ml': 490,   # Raiders +490
+            'total': 48.0,
+        },
+        (15, 'LAC', 'KC'): {
+            'spread': -5.5,   # Chiefs -5.5
+            'home_ml': -270,  # Chiefs -250 to -285 (using -270)
+            'away_ml': 205,   # Chargers +205
+            'total': 50.0,
+        },
+        (15, 'WAS', 'NYG'): {
+            'spread': -2.5,   # Giants -2.5
+            'home_ml': -140,  # Giants -134 to -142 (using -140)
+            'away_ml': 120,   # Commanders +120
+            'total': 42.0,
+        },
+        (15, 'IND', 'SEA'): {
+            'spread': -14.0,  # Seahawks -14
+            'home_ml': -1050, # Seahawks -1050
+            'away_ml': 675,   # Colts +675
+            'total': 45.0,
+        },
+        (15, 'TEN', 'SF'): {
+            'spread': -12.5,  # 49ers -12.5
+            'home_ml': -950,  # 49ers -950
+            'away_ml': 625,   # Titans +625
+            'total': 45.0,
+        },
+        (15, 'GB', 'DEN'): {
+            'spread': -2.5,   # Packers -2.5
+            'home_ml': -135,  # Packers -135
+            'away_ml': 114,   # Broncos +114
+            'total': 42.0,
+        },
+        (15, 'DET', 'LAR'): {
+            'spread': -6.0,   # Rams -6
+            'home_ml': -258,  # Rams -258
+            'away_ml': 210,   # Lions +210
+            'total': 48.0,
+        },
+        (15, 'CAR', 'NO'): {
+            'spread': 2.5,    # Panthers -2.5 means away favorite, so home spread is +2.5
+            'home_ml': 120,   # Saints +120
+            'away_ml': -142,  # Panthers -142
+            'total': 42.0,
+        },
+        (15, 'MIN', 'DAL'): {
+            'spread': -5.5,   # Cowboys -5.5
+            'home_ml': -270,  # Cowboys -270
+            'away_ml': 220,   # Vikings +220
+            'total': 48.0,
+        },
+        # Week 15, 2025 - Monday, Dec 15
+        (15, 'MIA', 'PIT'): {
+            'spread': -3.0,   # Steelers -3
+            'home_ml': -177,  # Steelers -175 to -180 (using -177)
+            'away_ml': 147,   # Dolphins +145 to +150 (using +147)
+            'total': 45.0,
+        },
+    }
+    
     # Known injured players (as of Week 14-15, 2025) - UPDATE WEEKLY
     # Format: player name -> status ('OUT', 'DOUBTFUL', 'QUESTIONABLE', 'IR')
     # Players with 'OUT', 'DOUBTFUL', or 'IR' will be excluded from parlay options
@@ -50,10 +156,11 @@ class ParlayBuilder:
         'Geno Smith': 'OUT',  # Shoulder injury (Las Vegas)
         'Trent McDuffie': 'OUT',  # Knee injury (Kansas City)
         'Wanya Morris': 'OUT',  # Knee injury (Kansas City)
+        'Drake London': 'OUT',  # Out (Atlanta)
+        'Garrett Wilson': 'IR',  # On IR (New York Jets)
         
         # QUESTIONABLE - Still included (may play)
         # 'Cade Otton': 'QUESTIONABLE',  # Knee injury (Tampa Bay) - may play
-        # 'Drake London': 'QUESTIONABLE',  # Knee injury (Atlanta) - may play
         
         # IMPORTANT: Update this list weekly before building parlays
         # Check these sources for current injury reports:
@@ -78,7 +185,7 @@ class ParlayBuilder:
         'KC': ['Travis Kelce', 'Xavier Worthy', 'Isiah Pacheco', 'Patrick Mahomes', 'DeAndre Hopkins'],
         'BUF': ['Keon Coleman', 'James Cook', 'Dalton Kincaid', 'Josh Allen', 'Khalil Shakir'],
         'SF': ['Deebo Samuel', 'George Kittle', 'Christian McCaffrey', 'Brock Purdy'],
-        'DAL': ['CeeDee Lamb', 'Rico Dowdle', 'Jake Ferguson', 'Cooper Rush'],
+        'DAL': ['CeeDee Lamb', 'Rico Dowdle', 'Jake Ferguson', 'Cooper Rush', 'George Pickens'],
         'MIA': ['Tyreek Hill', 'Jaylen Waddle', 'De\'Von Achane', 'Tua Tagovailoa'],
         'DET': ['Amon-Ra St. Brown', 'Jahmyr Gibbs', 'Sam LaPorta', 'Jared Goff', 'Jameson Williams'],
         'BAL': ['Zay Flowers', 'Mark Andrews', 'Derrick Henry', 'Lamar Jackson'],
@@ -89,7 +196,7 @@ class ParlayBuilder:
         'DEN': ['Courtland Sutton', 'Bo Nix', 'Marvin Mims Jr', 'Javonte Williams', 'R.J. Harvey'],
         'HOU': ['Nico Collins', 'Tank Dell', 'Stefon Diggs', 'Joe Mixon', 'C.J. Stroud'],
         'CLE': ['Amari Cooper', 'Jerry Jeudy', 'David Njoku', 'Deshaun Watson', 'Jerome Ford'],
-        'PIT': ['George Pickens', 'Najee Harris', 'Pat Freiermuth', 'Russell Wilson'],
+        'PIT': ['Najee Harris', 'Pat Freiermuth', 'Russell Wilson'],
         'SEA': ['DK Metcalf', 'Jaxon Smith-Njigba', 'Kenneth Walker', 'Cooper Kupp', 'Sam Howell'],
         'TB': ['Mike Evans', 'Chris Godwin', 'Bucky Irving', 'Baker Mayfield', 'Emeka Egbuka'],
         'NO': ['Chris Olave', 'Alvin Kamara', 'Derek Carr'],
@@ -136,7 +243,7 @@ class ParlayBuilder:
         'falcons': 'ATL', 'atlanta': 'ATL', 'atlanta falcons': 'ATL',
         'panthers': 'CAR', 'carolina': 'CAR', 'carolina panthers': 'CAR',
         'saints': 'NO', 'new orleans': 'NO', 'new orleans saints': 'NO',
-        'buccaneers': 'TB', 'tampa bay': 'TB', 'tampa bay buccaneers': 'TB', 'bucs': 'TB',
+        'buccaneers': 'TB', 'bucaneers': 'TB', 'tampa bay': 'TB', 'tampa bay buccaneers': 'TB', 'bucs': 'TB',
         'cardinals': 'ARI', 'arizona': 'ARI', 'arizona cardinals': 'ARI',
         'rams': 'LAR', 'los angeles rams': 'LAR', 'la rams': 'LAR',
         '49ers': 'SF', 'san francisco': 'SF', 'san francisco 49ers': 'SF', 'niners': 'SF',
@@ -235,6 +342,51 @@ class ParlayBuilder:
         
         return None
     
+    def _get_game_spread(self, game: Dict[str, Any]) -> float:
+        """Get game spread with manual override support.
+        
+        Args:
+            game: Game dict with home_team, away_team, week, and optionally spread_line
+            
+        Returns:
+            Spread from home team perspective (negative = home favorite)
+        """
+        week = game.get('week', 0)
+        away = game.get('away_team', '')
+        home = game.get('home_team', '')
+        
+        # Check for manual override first
+        override_key = (week, away, home)
+        if override_key in self.BETTING_LINES_OVERRIDE:
+            return self.BETTING_LINES_OVERRIDE[override_key].get('spread', 0)
+        
+        # Fallback to schedule data
+        return game.get('spread_line', 0) if pd.notna(game.get('spread_line', 0)) else 0
+    
+    def _get_game_moneylines(self, game: Dict[str, Any]) -> Tuple[float, float]:
+        """Get game moneylines with manual override support.
+        
+        Args:
+            game: Game dict with home_team, away_team, week
+            
+        Returns:
+            Tuple of (home_ml, away_ml)
+        """
+        week = game.get('week', 0)
+        away = game.get('away_team', '')
+        home = game.get('home_team', '')
+        
+        # Check for manual override first
+        override_key = (week, away, home)
+        if override_key in self.BETTING_LINES_OVERRIDE:
+            override = self.BETTING_LINES_OVERRIDE[override_key]
+            return override.get('home_ml', -110), override.get('away_ml', -110)
+        
+        # Fallback to schedule data
+        home_ml = game.get('home_moneyline', -110) if pd.notna(game.get('home_moneyline', -110)) else -110
+        away_ml = game.get('away_moneyline', -110) if pd.notna(game.get('away_moneyline', -110)) else -110
+        return home_ml, away_ml
+    
     def parse_parlay_query(self, query: str) -> Dict[str, Any]:
         """Parse parlay query to extract parameters.
         
@@ -246,9 +398,9 @@ class ParlayBuilder:
         """
         query_lower = query.lower()
         
-        # Extract number of legs
+        # Extract number of legs (2-6 legs supported)
         leg_patterns = [
-            r'(\d+)\s*(?:leg|legs)',
+            r'(\d+)[\s-]*(?:leg|legs)',  # Matches "6 leg", "6-leg", "6leg"
             r'(\d+)\s*(?:pick|picks)',
             r'build\s*(?:a\s*)?(\d+)',
         ]
@@ -256,7 +408,14 @@ class ParlayBuilder:
         for pattern in leg_patterns:
             match = re.search(pattern, query_lower)
             if match:
-                num_legs = int(match.group(1))
+                parsed_legs = int(match.group(1))
+                # Validate: must be between 2 and 6
+                if 2 <= parsed_legs <= 6:
+                    num_legs = parsed_legs
+                else:
+                    # Clamp to valid range
+                    num_legs = max(2, min(6, parsed_legs))
+                    logger.warning(f"Parlay legs must be between 2-6. Using {num_legs} legs.")
                 break
         
         # Extract week number
@@ -316,13 +475,32 @@ class ParlayBuilder:
             return None
         
         game = games.iloc[0]
+        week = int(game['week'])
+        home_team = game['home_team']
+        away_team = game['away_team']
+        
+        # Get spreads and moneylines with override support
+        game_dict = {
+            'week': week,
+            'home_team': home_team,
+            'away_team': away_team,
+            'spread_line': game.get('spread_line', 0),
+            'home_moneyline': game.get('home_moneyline', -110),
+            'away_moneyline': game.get('away_moneyline', -110),
+        }
+        
+        spread = self._get_game_spread(game_dict)
+        home_ml, away_ml = self._get_game_moneylines(game_dict)
+        
         return {
-            'home_team': game['home_team'],
-            'away_team': game['away_team'],
-            'week': int(game['week']),
+            'home_team': home_team,
+            'away_team': away_team,
+            'week': week,
             'gameday': game.get('gameday', 'TBD'),
-            'spread': game.get('spread_line', 0) if pd.notna(game.get('spread_line')) else 0,
+            'spread': spread,
             'total': game.get('total_line', 45) if pd.notna(game.get('total_line')) else 45,
+            'home_ml': home_ml,
+            'away_ml': away_ml,
         }
     
     def get_week_winners(self, week: int, season: int = 2025) -> List[Dict[str, Any]]:
@@ -341,8 +519,6 @@ class ParlayBuilder:
         
         # Get quick predictor for game predictions
         qp = self._get_quick_predictor()
-        if not qp.load_models():
-            logger.warning("Models not loaded, using basic predictions")
         
         winners = []
         
@@ -363,7 +539,13 @@ class ParlayBuilder:
                 if result.get('success') and not result.get('completed'):
                     predicted_winner = result.get('prediction')
                     confidence = result.get('confidence', 0.5)
-                    spread = result.get('spread', 0)
+                    # Get spread with override support
+                    spread = self._get_game_spread({
+                        'week': week,
+                        'home_team': home,
+                        'away_team': away,
+                        'spread_line': result.get('spread', 0),
+                    })
                     
                     winner_full = self.TEAM_FULL_NAMES.get(predicted_winner, predicted_winner)
                     loser = away if predicted_winner == home else home
@@ -414,17 +596,33 @@ class ParlayBuilder:
                 return 'LAR'
             return abbr
         
-        for _, game in week_games.iterrows():
-            home_team = normalize_team_abbr(game['home_team'])
-            away_team = normalize_team_abbr(game['away_team'])
+        for _, game_row in week_games.iterrows():
+            home_team = normalize_team_abbr(game_row['home_team'])
+            away_team = normalize_team_abbr(game_row['away_team'])
+            week_num = int(game_row['week'])
+            
+            # Get spreads and moneylines with override support
+            game_dict = {
+                'week': week_num,
+                'home_team': home_team,
+                'away_team': away_team,
+                'spread_line': game_row.get('spread_line', 0),
+                'home_moneyline': game_row.get('home_moneyline', -110),
+                'away_moneyline': game_row.get('away_moneyline', -110),
+            }
+            
+            spread = self._get_game_spread(game_dict)
+            home_ml, away_ml = self._get_game_moneylines(game_dict)
             
             games.append({
                 'home_team': home_team,
                 'away_team': away_team,
-                'week': int(game['week']),
-                'gameday': game.get('gameday', 'TBD'),
-                'spread': game.get('spread_line', 0) if pd.notna(game.get('spread_line')) else 0,
-                'total': game.get('total_line', 45) if pd.notna(game.get('total_line')) else 45,
+                'week': week_num,
+                'gameday': game_row.get('gameday', 'TBD'),
+                'spread': spread,
+                'total': game_row.get('total_line', 45) if pd.notna(game_row.get('total_line')) else 45,
+                'home_ml': home_ml,
+                'away_ml': away_ml,
             })
         
         return games
@@ -979,13 +1177,21 @@ class ParlayBuilder:
         """Build a parlay from selected options.
         
         Args:
-            selected_options: List of selected BetOptions
+            selected_options: List of selected BetOptions (2-6 legs supported)
             
         Returns:
             Parlay summary dict
         """
         if not selected_options:
             return {'success': False, 'error': 'No options selected'}
+        
+        num_legs = len(selected_options)
+        
+        # Validate number of legs (2-6 supported)
+        if num_legs < 2:
+            return {'success': False, 'error': f'Parlay must have at least 2 legs (got {num_legs})'}
+        if num_legs > 6:
+            return {'success': False, 'error': f'Parlay can have at most 6 legs (got {num_legs})'}
         
         # Calculate combined confidence (multiply probabilities)
         combined_confidence = 1.0

@@ -9,6 +9,7 @@ scipy>=1.11.0
 # Gradient Boosting
 xgboost>=2.0.0
 lightgbm>=4.0.0
+catboost>=1.2.0  # Optional but recommended for model diversity
 
 # LLM Integration
 anthropic>=0.34.0

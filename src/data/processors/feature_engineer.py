@@ -15,11 +15,16 @@ logger = setup_logger(__name__)
 class FeatureEngineer:
     """Engineer features from raw NFL data for model training and prediction."""
     
-    def __init__(self):
-        """Initialize the feature engineer."""
+    def __init__(self, expected_features: Optional[List[str]] = None):
+        """Initialize the feature engineer.
+        
+        Args:
+            expected_features: Optional list of expected feature names for validation
+        """
         self.team_stats_cache: Dict[str, pd.DataFrame] = {}
         self.player_stats_cache: Dict[str, pd.DataFrame] = {}
         self.epa_cache: Dict[str, Dict[str, float]] = {}  # Cache for EPA calculations
+        self.expected_features: Optional[List[str]] = expected_features
     
     def extract_features(
         self,
@@ -191,7 +196,53 @@ class FeatureEngineer:
         # Interaction features (must be last, after all other features are collected)
         features.update(self._extract_interaction_features(features))
         
+        # Validate features before returning
+        self._validate_features(features)
+        
         return features
+    
+    def _validate_features(self, features: Dict[str, Any]) -> None:
+        """Validate extracted features for completeness and data quality.
+        
+        Args:
+            features: Feature dictionary to validate
+        """
+        # Check for expected features if set
+        if self.expected_features is not None:
+            missing_features = set(self.expected_features) - set(features.keys())
+            if missing_features:
+                logger.warning(f"Missing {len(missing_features)} expected features: {list(missing_features)[:10]}")
+        
+        # Check for NaN or infinite values
+        nan_features = []
+        inf_features = []
+        
+        for key, value in features.items():
+            if isinstance(value, (int, float)):
+                if np.isnan(value):
+                    nan_features.append(key)
+                    # Replace NaN with 0.0
+                    features[key] = 0.0
+                    logger.debug(f"Replaced NaN in feature '{key}' with 0.0")
+                elif np.isinf(value):
+                    inf_features.append(key)
+                    # Replace inf with a large finite value
+                    features[key] = np.sign(value) * 1e6 if value != 0 else 0.0
+                    logger.warning(f"Replaced infinite value in feature '{key}' with {features[key]}")
+        
+        if nan_features:
+            logger.warning(f"Found NaN values in {len(nan_features)} features (replaced with 0.0)")
+        
+        if inf_features:
+            logger.warning(f"Found infinite values in {len(inf_features)} features (replaced with finite values)")
+        
+        # Check for None values
+        none_features = [key for key, value in features.items() if value is None]
+        if none_features:
+            logger.warning(f"Found None values in {len(none_features)} features: {none_features[:10]}")
+            # Replace None with 0.0 for numeric features
+            for key in none_features:
+                features[key] = 0.0
     
     def _extract_basic_features(self, game_info: GameInfo) -> Dict[str, Any]:
         """Extract basic game features.
@@ -306,55 +357,74 @@ class FeatureEngineer:
         game_date: datetime,
         n_games: int = 5
     ) -> Dict[str, Any]:
-        """Extract recent form features.
+        """Extract recent form features for multiple time windows (last 3 and last 5 games).
         
         Args:
             home_team: Home team abbreviation
             away_team: Away team abbreviation
             schedule_df: Schedule DataFrame
             game_date: Date of the game
-            n_games: Number of recent games to consider
+            n_games: Number of recent games to consider (default 5, but also calculates 3)
             
         Returns:
-            Dictionary of recent form features
+            Dictionary of recent form features for both 3 and 5 game windows
         """
         features = {}
         
-        # Get recent games for each team
-        home_recent = self._get_recent_games(home_team, schedule_df, game_date, n_games)
-        away_recent = self._get_recent_games(away_team, schedule_df, game_date, n_games)
+        # Calculate features for both last 3 and last 5 games
+        for window in [3, 5]:
+            # Get recent games for each team
+            home_recent = self._get_recent_games(home_team, schedule_df, game_date, window)
+            away_recent = self._get_recent_games(away_team, schedule_df, game_date, window)
+            
+            # Calculate win percentage
+            features[f'home_last_{window}_win_pct'] = self._calc_win_pct(home_recent, home_team)
+            features[f'away_last_{window}_win_pct'] = self._calc_win_pct(away_recent, away_team)
+            
+            # Calculate average points scored/allowed
+            features[f'home_last_{window}_avg_scored'] = self._calc_avg_points_scored(home_recent, home_team)
+            features[f'away_last_{window}_avg_scored'] = self._calc_avg_points_scored(away_recent, away_team)
+            
+            features[f'home_last_{window}_avg_allowed'] = self._calc_avg_points_allowed(home_recent, home_team)
+            features[f'away_last_{window}_avg_allowed'] = self._calc_avg_points_allowed(away_recent, away_team)
+            
+            # Point differential
+            features[f'home_last_{window}_point_diff'] = features[f'home_last_{window}_avg_scored'] - features[f'home_last_{window}_avg_allowed']
+            features[f'away_last_{window}_point_diff'] = features[f'away_last_{window}_avg_scored'] - features[f'away_last_{window}_avg_allowed']
+            
+            # Recent form trend (comparing 3-game to 5-game window)
+            if window == 5:
+                # Calculate momentum (trend from 5-game to 3-game window)
+                home_3_win = features.get('home_last_3_win_pct', 0.5)
+                away_3_win = features.get('away_last_3_win_pct', 0.5)
+                features['home_form_trend'] = home_3_win - features[f'home_last_{window}_win_pct']  # Positive = improving
+                features['away_form_trend'] = away_3_win - features[f'away_last_{window}_win_pct']
         
-        # Calculate win percentage
-        features[f'home_last_{n_games}_win_pct'] = self._calc_win_pct(home_recent, home_team)
-        features[f'away_last_{n_games}_win_pct'] = self._calc_win_pct(away_recent, away_team)
+        # Momentum indicators (using last 5 games)
+        home_recent_5 = self._get_recent_games(home_team, schedule_df, game_date, 5)
+        away_recent_5 = self._get_recent_games(away_team, schedule_df, game_date, 5)
+        features['home_momentum'] = self._calc_momentum(home_recent_5, home_team)
+        features['away_momentum'] = self._calc_momentum(away_recent_5, away_team)
         
-        # Calculate average points scored/allowed
-        features[f'home_last_{n_games}_avg_scored'] = self._calc_avg_points_scored(home_recent, home_team)
-        features[f'away_last_{n_games}_avg_scored'] = self._calc_avg_points_scored(away_recent, away_team)
-        
-        features[f'home_last_{n_games}_avg_allowed'] = self._calc_avg_points_allowed(home_recent, home_team)
-        features[f'away_last_{n_games}_avg_allowed'] = self._calc_avg_points_allowed(away_recent, away_team)
-        
-        # Momentum indicators
-        features['home_momentum'] = self._calc_momentum(home_recent, home_team)
-        features['away_momentum'] = self._calc_momentum(away_recent, away_team)
-        
-        # Advanced metrics: Red zone efficiency (simplified - using points per game as proxy)
-        # In a full implementation, would calculate actual red zone conversion rates
-        features[f'home_redzone_efficiency'] = features[f'home_last_{n_games}_avg_scored'] / 25.0 if features[f'home_last_{n_games}_avg_scored'] > 0 else 0.5
-        features[f'away_redzone_efficiency'] = features[f'away_last_{n_games}_avg_scored'] / 25.0 if features[f'away_last_{n_games}_avg_scored'] > 0 else 0.5
+        # Advanced metrics: Red zone efficiency (using last 5 games)
+        home_5_scored = features.get('home_last_5_avg_scored', 0)
+        away_5_scored = features.get('away_last_5_avg_scored', 0)
+        features['home_redzone_efficiency'] = home_5_scored / 25.0 if home_5_scored > 0 else 0.5
+        features['away_redzone_efficiency'] = away_5_scored / 25.0 if away_5_scored > 0 else 0.5
         
         # Third down efficiency (simplified - using yards per game as proxy)
         # In a full implementation, would calculate actual third down conversion rates
-        home_yards = existing_features.get('home_avg_yards', 350) if 'existing_features' in locals() else 350
-        away_yards = existing_features.get('away_avg_yards', 350) if 'existing_features' in locals() else 350
+        home_yards = features.get('home_avg_yards', 350)
+        away_yards = features.get('away_avg_yards', 350)
         features['home_third_down_eff'] = min(home_yards / 400.0, 1.0)  # Normalized
         features['away_third_down_eff'] = min(away_yards / 400.0, 1.0)  # Normalized
         
         # Time of possession (simplified - using point differential as proxy)
         # Teams that score more tend to have more TOP
-        features['home_top_proxy'] = min((features[f'home_last_{n_games}_avg_scored'] - features[f'home_last_{n_games}_avg_allowed']) / 20.0 + 0.5, 1.0)
-        features['away_top_proxy'] = min((features[f'away_last_{n_games}_avg_scored'] - features[f'away_last_{n_games}_avg_allowed']) / 20.0 + 0.5, 1.0)
+        home_5_diff = features.get('home_last_5_point_diff', 0)
+        away_5_diff = features.get('away_last_5_point_diff', 0)
+        features['home_top_proxy'] = min(home_5_diff / 20.0 + 0.5, 1.0)
+        features['away_top_proxy'] = min(away_5_diff / 20.0 + 0.5, 1.0)
         
         return features
     

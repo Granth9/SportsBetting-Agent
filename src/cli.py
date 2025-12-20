@@ -201,26 +201,10 @@ def backtest_command(args):
         print("Use --model-dir to specify the path to trained models.")
         sys.exit(1)
     
-    # TODO: Load historical propositions
-    # This would require implementing a data loader for historical games
+    # Backtest functionality requires historical proposition data
+    # To implement: create a data loader for historical games and propositions
     print("\nNote: Backtest functionality requires historical proposition data.")
-    print("Implement data loading in the backtest_command function.")
-    
-    # Placeholder for actual backtest
-    # propositions = load_historical_propositions(args.start_date, args.end_date)
-    # evaluator = PerformanceEvaluator(council)
-    # metrics = evaluator.backtest(propositions, initial_bankroll=args.bankroll)
-    
-    # Display results
-    # print("\n" + "="*80)
-    # print("BACKTEST RESULTS")
-    # print("="*80 + "\n")
-    # print(f"Accuracy: {metrics['accuracy']:.1%}")
-    # print(f"ROI: {metrics['roi']:.1%}")
-    # print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-    # print(f"Max Drawdown: {metrics['max_drawdown']:.1%}")
-    # print(f"Total Bets: {metrics['total_bets']}")
-    # print(f"Final Bankroll: ${metrics['final_bankroll']:.2f}")
+    print("Historical data loading is not yet implemented.")
 
 
 def analyze_manual_command(args):
@@ -581,7 +565,8 @@ def parlay_command(args):
         options = builder.generate_week_options(params['week'])
     else:
         print("\n❌ Could not parse parlay query")
-        print("💡 Try: '4 leg parlay Eagles vs Chargers' or '5 leg parlay week 14'")
+        print("💡 Try: '2 leg parlay Eagles vs Chargers' or '6 leg parlay week 14'")
+        print("   Supported: 2-6 leg parlays")
         return
     
     if not options:
@@ -724,8 +709,8 @@ def main():
     predict_parser.add_argument('--model-dir', default='models/trained', help='Directory with trained models')
     
     # Parlay builder command
-    parlay_parser = subparsers.add_parser('parlay', help='Build a parlay from betting options')
-    parlay_parser.add_argument('query', nargs='+', help='Parlay query (e.g., "4 leg parlay Eagles vs Chargers" or "5 leg parlay week 14")')
+    parlay_parser = subparsers.add_parser('parlay', help='Build a parlay from betting options (2-6 legs)')
+    parlay_parser.add_argument('query', nargs='+', help='Parlay query (e.g., "2 leg parlay Eagles vs Chargers" or "6 leg parlay week 14")')
     parlay_parser.add_argument('--model-dir', default='models/trained', help='Directory with trained models')
     
     # Injuries command
@@ -734,6 +719,12 @@ def main():
     injuries_parser.add_argument('--add', nargs=2, metavar=('PLAYER', 'STATUS'), help='Add injured player (e.g., --add "Jahmyr Gibbs" OUT)')
     injuries_parser.add_argument('--remove', metavar='PLAYER', help='Remove player from injured list (recovered)')
     injuries_parser.add_argument('--check', metavar='PLAYER', help='Check if a player is injured')
+    
+    # Refresh-data command
+    refresh_parser = subparsers.add_parser('refresh-data', help='Refresh rosters, injuries, and betting odds for a specific week')
+    refresh_parser.add_argument('--season', type=int, default=datetime.now().year, help='Season year (default: current year)')
+    refresh_parser.add_argument('--week', type=int, default=16, help='Week number (default: 16)')
+    refresh_parser.add_argument('--no-force', action='store_true', help='Do not force refresh (use cache if available)')
     
     # Parse arguments
     args = parser.parse_args()
@@ -757,6 +748,8 @@ def main():
         parlay_command(args)
     elif args.command == 'injuries':
         injuries_command(args)
+    elif args.command == 'refresh-data':
+        refresh_data_command(args)
 
 
 def injuries_command(args):
@@ -810,6 +803,40 @@ def injuries_command(args):
     else:
         # Default: show list
         injuries_command(argparse.Namespace(command='injuries', list=True, add=None, remove=None, check=None))
+
+
+def refresh_data_command(args):
+    """Handle the refresh-data command.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    from scripts.refresh_week16_data import refresh_week16_data
+    
+    print("\n" + "="*80)
+    print(f"REFRESHING DATA FOR {args.season} WEEK {args.week}")
+    print("="*80 + "\n")
+    
+    try:
+        result = refresh_week16_data(
+            season=args.season,
+            week=args.week,
+            force_refresh=not args.no_force
+        )
+        
+        print("\n" + "="*80)
+        print("REFRESH COMPLETE")
+        print("="*80)
+        print(f"\nSummary:")
+        print(f"  Rosters: {len(result.get('rosters', []))} players")
+        print(f"  Injuries: {len(result.get('injuries', []))} injury reports")
+        print(f"  Games: {len(result.get('schedule', []))} Week {args.week} games")
+        print("\nData has been cached and is ready for use in predictions.")
+        
+    except Exception as e:
+        logger.error(f"Error refreshing data: {e}", exc_info=True)
+        print(f"\n❌ Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

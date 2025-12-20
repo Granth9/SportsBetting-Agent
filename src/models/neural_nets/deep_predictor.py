@@ -88,7 +88,7 @@ class DeepPredictor(BaseModel):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.input_dim = None
     
-    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None) -> None:
+    def train(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray = None, y_val: np.ndarray = None, sample_weight: np.ndarray = None, **kwargs) -> None:
         """Train the neural network.
         
         Args:
@@ -96,8 +96,19 @@ class DeepPredictor(BaseModel):
             y: Training targets
             X_val: Validation features (optional)
             y_val: Validation targets (optional)
+            sample_weight: Optional sample weights for training
+            **kwargs: Additional parameters (class_weight is ignored for neural networks, use sample_weight instead)
         """
+        # Extract class_weight if provided (convert to sample_weight for neural networks)
+        class_weight = kwargs.pop('class_weight', None)
+        if class_weight is not None and sample_weight is None:
+            # Convert class weights to sample weights
+            from sklearn.utils.class_weight import compute_sample_weight
+            sample_weight = compute_sample_weight(class_weight, y)
+            logger.info(f"Converted class weights to sample weights for {self.name}")
         logger.info(f"Training {self.name} on {len(X)} samples")
+        if sample_weight is not None:
+            logger.info(f"Using temporal weighting (sample weights provided)")
         
         # Initialize model
         self.input_dim = X.shape[1]
@@ -108,12 +119,24 @@ class DeepPredictor(BaseModel):
         y_tensor = torch.LongTensor(y).to(self.device)
         
         # Loss and optimizer
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(reduction='none') if sample_weight is not None else nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
         # Training loop
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        # Create dataset with weights if provided
+        # Use a simpler approach: pass weights as part of dataset but use regular sampling
+        # This avoids issues with WeightedRandomSampler and gradient computation
+        if sample_weight is not None:
+            weights_tensor = torch.FloatTensor(sample_weight).to(self.device)
+            dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor, weights_tensor)
+            dataloader = torch.utils.data.DataLoader(
+                dataset, batch_size=self.batch_size, shuffle=True
+            )
+        else:
+            dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+            dataloader = torch.utils.data.DataLoader(
+                dataset, batch_size=self.batch_size, shuffle=True
+            )
         
         # Early stopping setup
         best_val_loss = float('inf')
@@ -131,11 +154,40 @@ class DeepPredictor(BaseModel):
         self.model.train()
         for epoch in range(self.epochs):
             total_loss = 0
-            for batch_X, batch_y in dataloader:
+            for batch_data in dataloader:
+                if sample_weight is not None:
+                    batch_X, batch_y, batch_weights = batch_data
+                else:
+                    batch_X, batch_y = batch_data
+                    batch_weights = None
+                
+                # Zero gradients at the start of each batch
                 optimizer.zero_grad()
+                
+                # Forward pass - ensure inputs are not modified
                 outputs = self.model(batch_X)
-                loss = criterion(outputs, batch_y)
+                
+                if sample_weight is not None:
+                    # Calculate per-sample losses
+                    loss_per_sample = criterion(outputs, batch_y)
+                    # Weighted average loss - ensure no in-place operations
+                    # Create a fresh copy of weights, detached from computation graph
+                    # This prevents any in-place modification issues
+                    weights = batch_weights.detach().clone().contiguous()
+                    # Ensure weights are on same device as loss
+                    if weights.device != loss_per_sample.device:
+                        weights = weights.to(loss_per_sample.device, non_blocking=True)
+                    # Calculate weighted loss without in-place operations
+                    # Use element-wise multiplication (creates new tensor)
+                    weighted_losses = loss_per_sample * weights
+                    loss = weighted_losses.mean()
+                else:
+                    loss = criterion(outputs, batch_y)
+                
+                # Backward pass - loss is a fresh scalar tensor
                 loss.backward()
+                # Clip gradients to prevent explosion
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
                 total_loss += loss.item()
             
@@ -144,20 +196,28 @@ class DeepPredictor(BaseModel):
             # Validation and early stopping
             if val_dataloader is not None:
                 self.model.eval()
-                val_loss = 0
+                val_loss = 0.0
+                val_samples = 0
                 with torch.no_grad():
                     for batch_X, batch_y in val_dataloader:
                         outputs = self.model(batch_X)
-                        loss = criterion(outputs, batch_y)
-                        val_loss += loss.item()
-                val_loss = val_loss / len(val_dataloader)
+                        # Calculate loss - ensure it's a scalar
+                        batch_loss = criterion(outputs, batch_y)
+                        # If batch_loss is a tensor (per-sample losses), take mean
+                        if isinstance(batch_loss, torch.Tensor) and batch_loss.numel() > 1:
+                            batch_loss = batch_loss.mean()
+                        val_loss += batch_loss.item() * len(batch_y)
+                        val_samples += len(batch_y)
+                val_loss = val_loss / val_samples if val_samples > 0 else float('inf')
                 self.model.train()
                 
                 # Check for improvement
                 if val_loss < best_val_loss - self.early_stopping_min_delta:
                     best_val_loss = val_loss
                     patience_counter = 0
-                    best_model_state = self.model.state_dict().copy()
+                    # Use deepcopy to avoid in-place modification issues
+                    import copy
+                    best_model_state = copy.deepcopy(self.model.state_dict())
                 else:
                     patience_counter += 1
                 

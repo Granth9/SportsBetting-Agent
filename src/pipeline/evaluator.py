@@ -323,4 +323,87 @@ class PerformanceEvaluator:
                 }
         
         return model_metrics
+    
+    def time_series_cross_validate(
+        self,
+        propositions: List[Proposition],
+        n_splits: int = 5
+    ) -> Dict[str, Any]:
+        """Perform time-series cross-validation on propositions.
+        
+        Uses walk-forward validation respecting temporal order.
+        
+        Args:
+            propositions: List of propositions (must be sorted by date)
+            n_splits: Number of CV folds
+            
+        Returns:
+            Dictionary with CV results and metrics
+        """
+        from src.data.processors.data_preprocessor import DataSplitter
+        from datetime import datetime
+        
+        logger.info(f"Performing time-series cross-validation with {n_splits} folds")
+        
+        # Convert propositions to DataFrame for splitting
+        prop_data = []
+        for prop in propositions:
+            prop_data.append({
+                'proposition': prop,
+                'date': prop.game_info.game_date,
+                'season': prop.game_info.season,
+                'week': prop.game_info.week
+            })
+        
+        prop_df = pd.DataFrame(prop_data)
+        prop_df = prop_df.sort_values('date').reset_index(drop=True)
+        
+        # Create time-series CV folds
+        folds = DataSplitter.time_series_cv(
+            prop_df,
+            date_col='date',
+            n_splits=n_splits
+        )
+        
+        if not folds:
+            logger.warning("No valid CV folds created")
+            return {}
+        
+        # Evaluate on each fold
+        fold_results = []
+        for fold_idx, (train_df, test_df) in enumerate(folds):
+            logger.info(f"\nFold {fold_idx + 1}/{len(folds)}: Train={len(train_df)}, Test={len(test_df)}")
+            
+            # Get test propositions
+            test_props = test_df['proposition'].tolist()
+            
+            # Run backtest on this fold
+            fold_metrics = self.backtest(test_props, initial_bankroll=1000.0)
+            fold_metrics['fold'] = fold_idx + 1
+            fold_results.append(fold_metrics)
+        
+        # Aggregate results
+        avg_accuracy = np.mean([r['accuracy'] for r in fold_results])
+        avg_roi = np.mean([r['roi'] for r in fold_results])
+        std_accuracy = np.std([r['accuracy'] for r in fold_results])
+        std_roi = np.std([r['roi'] for r in fold_results])
+        
+        cv_results = {
+            'n_folds': len(folds),
+            'fold_results': fold_results,
+            'mean_accuracy': avg_accuracy,
+            'std_accuracy': std_accuracy,
+            'mean_roi': avg_roi,
+            'std_roi': std_roi,
+            'summary': {
+                'accuracy': f"{avg_accuracy:.1%} ± {std_accuracy:.1%}",
+                'roi': f"{avg_roi:.1%} ± {std_roi:.1%}"
+            }
+        }
+        
+        logger.info(f"\nTime-series CV Results:")
+        logger.info(f"  Mean Accuracy: {avg_accuracy:.1%} ± {std_accuracy:.1%}")
+        logger.info(f"  Mean ROI: {avg_roi:.1%} ± {std_roi:.1%}")
+        
+        return cv_results
 

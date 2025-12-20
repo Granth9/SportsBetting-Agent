@@ -172,12 +172,12 @@ class SVMModel(BaseModel):
         if not hasattr(self.model, 'coef_'):
             return None
         
-            coef = np.abs(self.model.coef_[0])
-            
-                # Normalize
-                total = np.sum(coef)
-                if total > 0:
-                    coef = coef / total
+        coef = np.abs(self.model.coef_[0])
+        
+        # Normalize
+        total = np.sum(coef)
+        if total > 0:
+            coef = coef / total
         
         if self.feature_names and len(self.feature_names) == len(coef):
                 return dict(zip(self.feature_names, coef))

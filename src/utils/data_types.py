@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Any
+import numpy as np
 
 
 class BetType(Enum):
@@ -144,6 +145,32 @@ class ModelPrediction:
     def __post_init__(self):
         if self.key_features is None:
             self.key_features = {}
+        
+        # Ensure confidence is always a float
+        if isinstance(self.confidence, str):
+            try:
+                self.confidence = float(self.confidence)
+            except (ValueError, TypeError):
+                self.confidence = 0.5
+        elif not isinstance(self.confidence, (int, float, np.number)):
+            self.confidence = 0.5
+        else:
+            self.confidence = float(self.confidence)
+        
+        # Clamp confidence to [0.0, 1.0]
+        self.confidence = max(0.0, min(1.0, self.confidence))
+        
+        # Ensure probability is float if provided
+        if self.probability is not None:
+            if isinstance(self.probability, str):
+                try:
+                    self.probability = float(self.probability)
+                except (ValueError, TypeError):
+                    self.probability = None
+            elif isinstance(self.probability, (int, float, np.number)):
+                self.probability = float(self.probability)
+            else:
+                self.probability = None
 
 
 @dataclass
